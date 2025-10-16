@@ -15,6 +15,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 
 from ..core.portfolio_metrics import PortfolioAnalyzer, PortfolioMetrics
+from ..utils.sector_analysis import SectorAnalyzer
 
 # Load environment variables
 load_dotenv()
@@ -41,6 +42,7 @@ class PortfolioInsightAgent:
             use_openai: If True, use OpenAI instead of Anthropic
         """
         self.analyzer = PortfolioAnalyzer()
+        self.sector_analyzer = SectorAnalyzer()
         self.use_openai = use_openai
 
         # Initialize LLM
@@ -99,6 +101,22 @@ class PortfolioInsightAgent:
             except Exception as e:
                 return f"Error getting correlations: {str(e)}"
 
+        def analyze_sector_exposure(portfolio_str: str) -> str:
+            """
+            Analyze sector exposure for a portfolio.
+            Example: "40% AAPL, 30% MSFT, 30% GOOGL"
+            """
+            try:
+                holdings = self.analyzer.parse_portfolio(portfolio_str)
+                if not holdings:
+                    return "Could not parse portfolio."
+
+                sector_summary = self.sector_analyzer.get_sector_summary(holdings)
+                return self.sector_analyzer.format_sector_analysis(sector_summary)
+
+            except Exception as e:
+                return f"Error analyzing sectors: {str(e)}"
+
         tools = [
             Tool(
                 name="analyze_portfolio",
@@ -117,6 +135,15 @@ class PortfolioInsightAgent:
                     "Input should be comma-separated tickers like 'AAPL,MSFT,GOOGL'. "
                     "Useful for understanding diversification between assets."
                 )
+            ),
+            Tool(
+                name="analyze_sectors",
+                func=analyze_sector_exposure,
+                description=(
+                    "Analyzes portfolio sector exposure and concentration. "
+                    "Input should be a portfolio description like '40% AAPL, 30% MSFT, 30% GOOGL'. "
+                    "Returns sector breakdown, concentration metrics, and risk profile."
+                )
             )
         ]
 
@@ -125,6 +152,17 @@ class PortfolioInsightAgent:
     def _format_metrics(self, metrics: PortfolioMetrics) -> str:
         """Format portfolio metrics into a readable string"""
         holdings_str = ", ".join([f"{k}: {v:.1%}" for k, v in metrics.holdings.items()])
+
+        # Format advanced metrics if available
+        advanced_metrics = ""
+        if metrics.sortino_ratio is not None:
+            advanced_metrics = f"""
+Advanced Risk-Adjusted Metrics:
+- Sortino Ratio: {metrics.sortino_ratio:.3f}
+- Calmar Ratio: {metrics.calmar_ratio:.3f}
+- Information Ratio: {metrics.information_ratio:.3f}
+- Downside Deviation: {metrics.downside_deviation:.2%}
+"""
 
         return f"""
 Portfolio Analysis Results:
@@ -143,7 +181,7 @@ Risk Metrics:
 - Maximum Drawdown: {metrics.max_drawdown:.2%}
 - Value at Risk (95%): {metrics.var_95:.2%}
 - Conditional VaR (95%): {metrics.cvar_95:.2%}
-
+{advanced_metrics}
 Interpretation:
 - Sharpe Ratio: {'Excellent (>2)' if metrics.sharpe_ratio > 2 else 'Good (1-2)' if metrics.sharpe_ratio > 1 else 'Fair (0-1)' if metrics.sharpe_ratio > 0 else 'Poor (<0)'}
 - Volatility: {'High (>25%)' if metrics.annual_volatility > 0.25 else 'Moderate (15-25%)' if metrics.annual_volatility > 0.15 else 'Low (<15%)'}

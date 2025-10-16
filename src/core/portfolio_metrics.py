@@ -24,6 +24,11 @@ class PortfolioMetrics:
     holdings: Dict[str, float]
     total_value: float
     period_days: int
+    # Advanced metrics
+    sortino_ratio: Optional[float] = None
+    calmar_ratio: Optional[float] = None
+    information_ratio: Optional[float] = None
+    downside_deviation: Optional[float] = None
 
 
 class PortfolioAnalyzer:
@@ -268,6 +273,12 @@ class PortfolioAnalyzer:
         var_95 = self.calculate_var(portfolio_returns)
         cvar_95 = self.calculate_cvar(portfolio_returns)
 
+        # Calculate advanced metrics
+        sortino = self.calculate_sortino_ratio(annual_return, portfolio_returns)
+        calmar = self.calculate_calmar_ratio(annual_return, max_dd)
+        info_ratio = self.calculate_information_ratio(portfolio_returns, period)
+        downside_dev = self.calculate_downside_deviation(portfolio_returns)
+
         return PortfolioMetrics(
             annual_return=annual_return,
             annual_volatility=volatility,
@@ -278,7 +289,11 @@ class PortfolioAnalyzer:
             cvar_95=cvar_95,
             holdings=holdings,
             total_value=1.0,  # Normalized to 1
-            period_days=len(portfolio_returns)
+            period_days=len(portfolio_returns),
+            sortino_ratio=sortino,
+            calmar_ratio=calmar,
+            information_ratio=info_ratio,
+            downside_deviation=downside_dev
         )
 
     def get_asset_correlations(
@@ -290,3 +305,124 @@ class PortfolioAnalyzer:
         prices = self.fetch_price_data(tickers, period)
         returns = self.calculate_returns(prices)
         return returns.corr()
+
+    def calculate_downside_deviation(
+        self,
+        returns: pd.Series,
+        mar: float = 0.0
+    ) -> float:
+        """
+        Calculate downside deviation (semi-deviation).
+        Only considers returns below the Minimum Acceptable Return (MAR).
+
+        Args:
+            returns: Series of returns
+            mar: Minimum Acceptable Return (default 0)
+
+        Returns:
+            Annualized downside deviation
+        """
+        downside_returns = returns[returns < mar]
+        if len(downside_returns) == 0:
+            return 0.0
+        downside_variance = np.mean((downside_returns - mar) ** 2)
+        downside_dev = np.sqrt(downside_variance) * np.sqrt(252)
+        return downside_dev
+
+    def calculate_sortino_ratio(
+        self,
+        annual_return: float,
+        returns: pd.Series,
+        mar: float = 0.0
+    ) -> float:
+        """
+        Calculate Sortino ratio.
+        Similar to Sharpe but uses downside deviation instead of total volatility.
+
+        Args:
+            annual_return: Annualized return
+            returns: Series of returns
+            mar: Minimum Acceptable Return (default 0)
+
+        Returns:
+            Sortino ratio
+        """
+        downside_dev = self.calculate_downside_deviation(returns, mar)
+        if downside_dev == 0:
+            return 0.0
+
+        # Convert MAR to annual if provided as daily
+        annual_mar = (1 + mar) ** 252 - 1 if abs(mar) < 0.1 else mar
+
+        return (annual_return - annual_mar) / downside_dev
+
+    def calculate_calmar_ratio(
+        self,
+        annual_return: float,
+        max_drawdown: float
+    ) -> float:
+        """
+        Calculate Calmar ratio.
+        Return divided by maximum drawdown (risk-adjusted return metric).
+
+        Args:
+            annual_return: Annualized return
+            max_drawdown: Maximum drawdown (negative value)
+
+        Returns:
+            Calmar ratio
+        """
+        if max_drawdown == 0:
+            return 0.0
+
+        # Take absolute value of drawdown since it's negative
+        return annual_return / abs(max_drawdown)
+
+    def calculate_information_ratio(
+        self,
+        portfolio_returns: pd.Series,
+        period: str = "1y"
+    ) -> float:
+        """
+        Calculate Information Ratio.
+        Measures portfolio returns relative to benchmark, adjusted for tracking error.
+
+        Args:
+            portfolio_returns: Series of portfolio returns
+            period: Period for benchmark data
+
+        Returns:
+            Information ratio
+        """
+        try:
+            # Fetch benchmark (S&P 500) data
+            market_data = yf.download(
+                self.market_ticker,
+                period=period,
+                progress=False
+            )
+            market_returns = market_data['Adj Close'].pct_change().dropna()
+
+            # Align dates
+            common_dates = portfolio_returns.index.intersection(market_returns.index)
+            if len(common_dates) < 20:
+                return 0.0
+
+            port_aligned = portfolio_returns.loc[common_dates]
+            market_aligned = market_returns.loc[common_dates]
+
+            # Calculate excess returns
+            excess_returns = port_aligned - market_aligned
+
+            # Annualize metrics
+            annual_excess_return = self.calculate_annual_return(excess_returns)
+            tracking_error = excess_returns.std() * np.sqrt(252)
+
+            if tracking_error == 0:
+                return 0.0
+
+            return annual_excess_return / tracking_error
+
+        except Exception as e:
+            print(f"Error calculating information ratio: {e}")
+            return 0.0

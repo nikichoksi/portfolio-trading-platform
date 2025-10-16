@@ -12,6 +12,12 @@ from dotenv import load_dotenv
 
 from agents.portfolio_agent import PortfolioInsightAgent
 from core.portfolio_metrics import PortfolioAnalyzer
+from utils.visualizations import (
+    create_performance_chart, create_drawdown_chart, create_correlation_heatmap,
+    create_sector_pie_chart, create_risk_return_scatter, create_rolling_metrics_chart,
+    create_var_chart
+)
+from utils.sector_analysis import SectorAnalyzer
 
 # Load environment variables
 load_dotenv()
@@ -69,6 +75,12 @@ def init_session_state():
         st.session_state.agent = None
     if "last_metrics" not in st.session_state:
         st.session_state.last_metrics = None
+    if "last_holdings" not in st.session_state:
+        st.session_state.last_holdings = None
+    if "last_prices" not in st.session_state:
+        st.session_state.last_prices = None
+    if "last_returns" not in st.session_state:
+        st.session_state.last_returns = None
 
 
 def check_api_keys() -> tuple[bool, str]:
@@ -274,7 +286,7 @@ def main():
             st.rerun()
 
     # Main content
-    tab1, tab2 = st.tabs(["💬 Chat", "📈 Detailed Metrics"])
+    tab1, tab2, tab3, tab4 = st.tabs(["💬 Chat", "📈 Performance", "📊 Risk Analysis", "🎯 Sector & Diversification"])
 
     with tab1:
         st.subheader("Chat with Your Portfolio Analyst")
@@ -296,6 +308,20 @@ def main():
             # Add user message to history
             with st.spinner("Analyzing..."):
                 try:
+                    # Check if this is a portfolio analysis request
+                    if "portfolio" in user_input.lower() or any(symbol in user_input.upper() for symbol in ['AAPL', 'MSFT', 'GOOGL', '%']):
+                        # Extract and store portfolio data
+                        analyzer = PortfolioAnalyzer()
+                        holdings = analyzer.parse_portfolio(user_input)
+                        if holdings:
+                            st.session_state.last_holdings = holdings
+                            prices = analyzer.fetch_price_data(list(holdings.keys()))
+                            returns = analyzer.calculate_returns(prices)
+                            portfolio_returns = analyzer.calculate_portfolio_returns(returns, holdings)
+                            st.session_state.last_prices = prices
+                            st.session_state.last_returns = portfolio_returns
+                            st.session_state.last_metrics = analyzer.analyze_portfolio(holdings)
+
                     response, updated_history = st.session_state.agent.chat(
                         user_input,
                         st.session_state.chat_history
@@ -306,10 +332,127 @@ def main():
                     st.error(f"Error: {str(e)}")
 
     with tab2:
-        st.subheader("Detailed Portfolio Metrics")
+        st.subheader("Performance Analysis")
 
-        if st.session_state.last_metrics:
-            create_metrics_visualization(st.session_state.last_metrics)
+        if st.session_state.last_metrics and st.session_state.last_prices is not None:
+            # Risk-Return scatter
+            st.plotly_chart(
+                create_risk_return_scatter(st.session_state.last_metrics),
+                use_container_width=True
+            )
+
+            # Performance over time
+            st.plotly_chart(
+                create_performance_chart(
+                    st.session_state.last_prices,
+                    st.session_state.last_holdings
+                ),
+                use_container_width=True
+            )
+
+            # Rolling metrics
+            if st.session_state.last_returns is not None:
+                st.plotly_chart(
+                    create_rolling_metrics_chart(st.session_state.last_returns),
+                    use_container_width=True
+                )
+
+        else:
+            st.info("👈 Start by analyzing a portfolio in the Chat tab!")
+
+    with tab3:
+        st.subheader("Risk Analysis")
+
+        if st.session_state.last_metrics and st.session_state.last_returns is not None:
+            # Risk metrics cards
+            col1, col2, col3, col4 = st.columns(4)
+
+            with col1:
+                st.metric(
+                    label="Sharpe Ratio",
+                    value=f"{st.session_state.last_metrics.sharpe_ratio:.3f}",
+                    delta="Good" if st.session_state.last_metrics.sharpe_ratio > 1 else "Fair"
+                )
+
+            with col2:
+                st.metric(
+                    label="Sortino Ratio",
+                    value=f"{st.session_state.last_metrics.sortino_ratio:.3f}" if st.session_state.last_metrics.sortino_ratio else "N/A"
+                )
+
+            with col3:
+                st.metric(
+                    label="Calmar Ratio",
+                    value=f"{st.session_state.last_metrics.calmar_ratio:.3f}" if st.session_state.last_metrics.calmar_ratio else "N/A"
+                )
+
+            with col4:
+                st.metric(
+                    label="Info Ratio",
+                    value=f"{st.session_state.last_metrics.information_ratio:.3f}" if st.session_state.last_metrics.information_ratio else "N/A"
+                )
+
+            # Drawdown chart
+            st.plotly_chart(
+                create_drawdown_chart(st.session_state.last_returns),
+                use_container_width=True
+            )
+
+            # VaR distribution
+            st.plotly_chart(
+                create_var_chart(st.session_state.last_returns),
+                use_container_width=True
+            )
+
+        else:
+            st.info("👈 Start by analyzing a portfolio in the Chat tab!")
+
+    with tab4:
+        st.subheader("Sector & Diversification Analysis")
+
+        if st.session_state.last_holdings:
+            # Sector analysis
+            sector_analyzer = SectorAnalyzer()
+            sector_summary = sector_analyzer.get_sector_summary(st.session_state.last_holdings)
+
+            # Sector pie chart
+            st.plotly_chart(
+                create_sector_pie_chart(sector_summary['sector_exposure']),
+                use_container_width=True
+            )
+
+            # Diversification metrics
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                st.metric(
+                    label="Number of Sectors",
+                    value=sector_summary['num_sectors']
+                )
+
+            with col2:
+                st.metric(
+                    label="Concentration Level",
+                    value=sector_summary['concentration_level']
+                )
+
+            with col3:
+                st.metric(
+                    label="HHI Score",
+                    value=f"{sector_summary['concentration_hhi']:.3f}"
+                )
+
+            # Correlation heatmap
+            if st.session_state.last_prices is not None:
+                analyzer = PortfolioAnalyzer()
+                corr_matrix = analyzer.get_asset_correlations(
+                    list(st.session_state.last_holdings.keys())
+                )
+                st.plotly_chart(
+                    create_correlation_heatmap(corr_matrix),
+                    use_container_width=True
+                )
+
         else:
             st.info("👈 Start by analyzing a portfolio in the Chat tab!")
 
@@ -322,10 +465,12 @@ def main():
 
             The agent will calculate:
             - Annual return and volatility
-            - Sharpe ratio (risk-adjusted return)
+            - Advanced risk metrics (Sharpe, Sortino, Calmar, Information Ratio)
             - Beta (market sensitivity)
             - Maximum drawdown
             - Value at Risk (VaR)
+            - Sector exposure and concentration
+            - Asset correlations
             - And more!
             """)
 
