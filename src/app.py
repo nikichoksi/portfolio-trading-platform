@@ -198,31 +198,21 @@ def create_metrics_visualization(metrics):
 
 def render_chat_history():
     """Render chat history"""
-    import json
-    import re
-
     for i, message in enumerate(st.session_state.chat_history):
         if i % 2 == 0:  # User message
             with st.chat_message("user", avatar="👤"):
                 st.markdown(message.content)
         else:  # Agent message
             with st.chat_message("assistant", avatar="🤖"):
-                # Clean up the response if it's in JSON format
+                # Content should already be cleaned by the agent
                 content = message.content
 
-                if isinstance(content, str):
-                    # Try to parse as JSON list
-                    try:
-                        parsed = json.loads(content)
-                        if isinstance(parsed, list) and len(parsed) > 0:
-                            if isinstance(parsed[0], dict) and 'text' in parsed[0]:
-                                content = parsed[0]['text']
-                    except:
-                        # If JSON parsing fails, try regex
-                        if '[{' in content and '"text":' in content:
-                            match = re.search(r'\[.*?"text"\s*:\s*"([^"]*(?:\\"[^"]*)*)"', content, re.DOTALL)
-                            if match:
-                                content = match.group(1).replace('\\n', '\n').replace('\\"', '"')
+                # Handle any remaining list format (safety check)
+                if isinstance(content, list):
+                    if len(content) > 0 and isinstance(content[0], dict) and 'text' in content[0]:
+                        content = content[0]['text']
+                    else:
+                        content = str(content)
 
                 st.markdown(content)
 
@@ -350,18 +340,7 @@ def main():
                         st.session_state.chat_history
                     )
 
-                    # Clean up response if it's in list/dict format
-                    if isinstance(response, str):
-                        import re
-                        # Extract text from JSON if present
-                        if '"text":' in response:
-                            match = re.search(r'"text"\s*:\s*"([^"]*(?:\\"[^"]*)*)"', response)
-                            if match:
-                                response = match.group(1).replace('\\"', '"').replace('\\n', '\n')
-                        # Remove list brackets and dict syntax
-                        response = re.sub(r'^\[.*?"text"\s*:\s*"', '', response)
-                        response = re.sub(r'"\s*,?\s*"type".*?\]\s*$', '', response)
-
+                    # Response is already cleaned by the agent
                     st.session_state.chat_history = updated_history
                     st.rerun()
                 except Exception as e:

@@ -40,6 +40,9 @@ env/
 # Data
 data/*.csv
 data/*.json
+data/*.db
+data/*.sqlite
+data/*.sqlite3
 !data/.gitkeep
 
 # Logs

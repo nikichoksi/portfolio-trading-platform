@@ -9,6 +9,12 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from database.models import Position
+
 
 def create_performance_chart(
     prices: pd.DataFrame,
@@ -365,6 +371,289 @@ def create_var_chart(
         height=450,
         showlegend=False,
         bargap=0.1
+    )
+
+    return fig
+
+
+# ============= NEW DASHBOARD VISUALIZATIONS =============
+
+def create_positions_table_chart(positions: List[Position]) -> go.Figure:
+    """
+    Create an interactive table showing portfolio positions.
+
+    Args:
+        positions: List of Position objects
+
+    Returns:
+        Plotly Figure object
+    """
+    if not positions:
+        return go.Figure()
+
+    fig = go.Figure(data=[go.Table(
+        header=dict(
+            values=['<b>Ticker</b>', '<b>Quantity</b>', '<b>Avg Cost</b>',
+                   '<b>Current Price</b>', '<b>Market Value</b>',
+                   '<b>P&L</b>', '<b>P&L %</b>'],
+            fill_color='#1E40AF',
+            font=dict(color='white', size=12),
+            align='left'
+        ),
+        cells=dict(
+            values=[
+                [p.ticker for p in positions],
+                [f"{p.quantity:.2f}" for p in positions],
+                [f"${p.avg_cost:.2f}" for p in positions],
+                [f"${p.current_price:.2f}" for p in positions],
+                [f"${p.market_value:.2f}" for p in positions],
+                [f"${p.unrealized_pnl:.2f}" for p in positions],
+                [f"{p.unrealized_pnl_pct:.2f}%" for p in positions]
+            ],
+            fill_color=[['white' if i % 2 == 0 else '#F3F4F6'
+                        for i in range(len(positions))] for _ in range(7)],
+            align='left',
+            font=dict(size=11)
+        )
+    )])
+
+    fig.update_layout(
+        title="Current Holdings",
+        height=max(300, len(positions) * 40 + 100),
+        margin=dict(l=0, r=0, t=40, b=0)
+    )
+
+    return fig
+
+
+def create_portfolio_allocation_pie(positions: List[Position]) -> go.Figure:
+    """
+    Create portfolio allocation pie chart by market value.
+
+    Args:
+        positions: List of Position objects
+
+    Returns:
+        Plotly Figure object
+    """
+    if not positions:
+        return go.Figure()
+
+    tickers = [p.ticker for p in positions]
+    values = [p.market_value for p in positions]
+
+    colors = px.colors.qualitative.Set3
+
+    fig = go.Figure(data=[go.Pie(
+        labels=tickers,
+        values=values,
+        hole=0.4,
+        textposition='auto',
+        textinfo='label+percent',
+        hovertemplate='<b>%{label}</b><br>' +
+                     'Value: $%{value:,.2f}<br>' +
+                     'Allocation: %{percent}<extra></extra>',
+        marker=dict(
+            colors=colors[:len(tickers)],
+            line=dict(color='white', width=2)
+        )
+    )])
+
+    total_value = sum(values)
+    fig.update_layout(
+        title=f"Portfolio Allocation (Total: ${total_value:,.2f})",
+        template='plotly_white',
+        height=450,
+        annotations=[dict(
+            text=f'${total_value:,.0f}',
+            x=0.5, y=0.5,
+            font_size=20,
+            showarrow=False
+        )]
+    )
+
+    return fig
+
+
+def create_pnl_bar_chart(positions: List[Position]) -> go.Figure:
+    """
+    Create bar chart showing P&L for each position.
+
+    Args:
+        positions: List of Position objects
+
+    Returns:
+        Plotly Figure object
+    """
+    if not positions:
+        return go.Figure()
+
+    # Sort by P&L
+    sorted_positions = sorted(positions, key=lambda p: p.unrealized_pnl, reverse=True)
+
+    tickers = [p.ticker for p in sorted_positions]
+    pnl_values = [p.unrealized_pnl for p in sorted_positions]
+    colors = ['green' if pnl >= 0 else 'red' for pnl in pnl_values]
+
+    fig = go.Figure(data=[go.Bar(
+        x=tickers,
+        y=pnl_values,
+        marker_color=colors,
+        text=[f"${pnl:.2f}" for pnl in pnl_values],
+        textposition='auto',
+        hovertemplate='<b>%{x}</b><br>P&L: $%{y:.2f}<extra></extra>'
+    )])
+
+    fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
+
+    fig.update_layout(
+        title="Unrealized P&L by Position",
+        xaxis_title="Ticker",
+        yaxis_title="Unrealized P&L ($)",
+        template='plotly_white',
+        height=400,
+        showlegend=False
+    )
+
+    return fig
+
+
+def create_pnl_percentage_bar(positions: List[Position]) -> go.Figure:
+    """
+    Create bar chart showing P&L percentage for each position.
+
+    Args:
+        positions: List of Position objects
+
+    Returns:
+        Plotly Figure object
+    """
+    if not positions:
+        return go.Figure()
+
+    # Sort by P&L %
+    sorted_positions = sorted(positions, key=lambda p: p.unrealized_pnl_pct, reverse=True)
+
+    tickers = [p.ticker for p in sorted_positions]
+    pnl_pct = [p.unrealized_pnl_pct for p in sorted_positions]
+    colors = ['green' if pct >= 0 else 'red' for pct in pnl_pct]
+
+    fig = go.Figure(data=[go.Bar(
+        x=tickers,
+        y=pnl_pct,
+        marker_color=colors,
+        text=[f"{pct:.2f}%" for pct in pnl_pct],
+        textposition='auto',
+        hovertemplate='<b>%{x}</b><br>Return: %{y:.2f}%<extra></extra>'
+    )])
+
+    fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
+
+    fig.update_layout(
+        title="Return % by Position",
+        xaxis_title="Ticker",
+        yaxis_title="Return (%)",
+        template='plotly_white',
+        height=400,
+        showlegend=False
+    )
+
+    return fig
+
+
+def create_portfolio_value_gauge(current_value: float, cost_basis: float) -> go.Figure:
+    """
+    Create gauge chart showing portfolio performance.
+
+    Args:
+        current_value: Current portfolio value
+        cost_basis: Total cost basis
+
+    Returns:
+        Plotly Figure object
+    """
+    return_pct = ((current_value - cost_basis) / cost_basis * 100) if cost_basis > 0 else 0
+
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number+delta",
+        value=return_pct,
+        domain={'x': [0, 1], 'y': [0, 1]},
+        title={'text': "Portfolio Return %", 'font': {'size': 20}},
+        delta={'reference': 0, 'suffix': '%'},
+        number={'suffix': '%'},
+        gauge={
+            'axis': {'range': [-50, 50], 'tickwidth': 1},
+            'bar': {'color': "darkblue"},
+            'bgcolor': "white",
+            'borderwidth': 2,
+            'bordercolor': "gray",
+            'steps': [
+                {'range': [-50, -10], 'color': '#FEE2E2'},
+                {'range': [-10, 0], 'color': '#FED7AA'},
+                {'range': [0, 10], 'color': '#D1FAE5'},
+                {'range': [10, 50], 'color': '#A7F3D0'}
+            ],
+            'threshold': {
+                'line': {'color': "red", 'width': 4},
+                'thickness': 0.75,
+                'value': 0
+            }
+        }
+    ))
+
+    fig.update_layout(
+        height=300,
+        margin=dict(l=20, r=20, t=60, b=20)
+    )
+
+    return fig
+
+
+def create_portfolio_timeline(positions: List[Position], price_data: Dict[str, pd.DataFrame]) -> go.Figure:
+    """
+    Create timeline chart showing portfolio value over time.
+
+    Args:
+        positions: List of Position objects
+        price_data: Dictionary of {ticker: price_history_dataframe}
+
+    Returns:
+        Plotly Figure object
+    """
+    if not positions or not price_data:
+        return go.Figure()
+
+    fig = go.Figure()
+
+    colors = px.colors.qualitative.Set2
+    for idx, position in enumerate(positions):
+        ticker = position.ticker
+        if ticker in price_data and not price_data[ticker].empty:
+            df = price_data[ticker]
+
+            # Calculate value over time (quantity * price)
+            if 'Close' in df.columns:
+                values = df['Close'] * position.quantity
+
+                fig.add_trace(go.Scatter(
+                    x=df.index,
+                    y=values,
+                    mode='lines',
+                    name=ticker,
+                    line=dict(color=colors[idx % len(colors)], width=2),
+                    stackgroup='one',
+                    hovertemplate=f'<b>{ticker}</b><br>' +
+                                 'Date: %{x}<br>' +
+                                 'Value: $%{y:.2f}<extra></extra>'
+                ))
+
+    fig.update_layout(
+        title="Portfolio Value Over Time",
+        xaxis_title="Date",
+        yaxis_title="Value ($)",
+        template='plotly_white',
+        height=500,
+        hovermode='x unified'
     )
 
     return fig

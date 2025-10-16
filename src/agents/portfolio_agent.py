@@ -18,8 +18,13 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core.portfolio_metrics import PortfolioAnalyzer, PortfolioMetrics
-from utils.sector_analysis import SectorAnalyzer
+try:
+    from core.portfolio_metrics import PortfolioAnalyzer as CoreAnalyzer, PortfolioMetrics as CoreMetrics
+    from utils.sector_analysis import SectorAnalyzer
+    LEGACY_MODE = True
+except ImportError:
+    from utils.portfolio_analytics import PortfolioAnalyzer, PortfolioMetrics, generate_portfolio_narrative, identify_portfolio_strengths_weaknesses
+    LEGACY_MODE = False
 
 # Load environment variables
 load_dotenv()
@@ -35,7 +40,8 @@ class PortfolioInsightAgent:
         self,
         model: str = "claude-3-haiku-20240307",
         temperature: float = 0.1,
-        use_openai: bool = False
+        use_openai: bool = False,
+        service=None  # Portfolio service for direct integration
     ):
         """
         Initialize the Portfolio Insight Agent.
@@ -44,9 +50,15 @@ class PortfolioInsightAgent:
             model: Model name (Claude or GPT)
             temperature: Model temperature (0-1)
             use_openai: If True, use OpenAI instead of Anthropic
+            service: Optional PortfolioService for direct integration
         """
-        self.analyzer = PortfolioAnalyzer()
-        self.sector_analyzer = SectorAnalyzer()
+        if LEGACY_MODE:
+            self.analyzer = CoreAnalyzer()
+            self.sector_analyzer = SectorAnalyzer()
+        else:
+            self.analyzer = PortfolioAnalyzer()
+
+        self.service = service
         self.use_openai = use_openai
 
         # Initialize LLM
@@ -244,7 +256,24 @@ Remember: You're providing analysis and education, not financial advice or recom
                 "input": query,
                 "chat_history": chat_history or []
             })
-            return response["output"]
+
+            output = response["output"]
+
+            # AgentExecutor can return output in different formats
+            # Handle list format: [{'text': '...', 'type': 'text', 'index': 0}]
+            if isinstance(output, list):
+                if len(output) > 0 and isinstance(output[0], dict):
+                    if 'text' in output[0]:
+                        return output[0]['text']
+                # If list but not in expected format, join all items
+                return ' '.join(str(item) for item in output)
+
+            # Handle string format (fallback)
+            if isinstance(output, str):
+                return output
+
+            # Handle any other format
+            return str(output)
 
         except Exception as e:
             return f"Error during analysis: {str(e)}"
@@ -270,6 +299,90 @@ Remember: You're providing analysis and education, not financial advice or recom
         chat_history.append(AIMessage(content=response))
 
         return response, chat_history
+
+    def analyze_live_portfolio(self) -> str:
+        """
+        Analyze the current portfolio from the service.
+        Requires service to be set during initialization.
+        """
+        if not self.service:
+            return "Portfolio service not initialized. Cannot analyze live portfolio."
+
+        if LEGACY_MODE:
+            return "Live portfolio analysis requires updated analytics module."
+
+        try:
+            # Get current positions
+            positions = self.service.get_positions()
+
+            if not positions:
+                return "Your portfolio is empty. Start trading to build positions for analysis."
+
+            # Get price history for all positions
+            tickers = [p.ticker for p in positions]
+            price_history = {}
+            sectors = {}
+
+            for ticker in tickers:
+                df = self.service.get_price_history(ticker, "3mo")
+                if not df.empty:
+                    price_history[ticker] = df
+
+                # Get sector info
+                info = self.service.get_stock_info(ticker)
+                if info:
+                    sectors[ticker] = info.get('sector', 'Other')
+
+            # Calculate metrics
+            metrics = self.analyzer.calculate_portfolio_metrics(
+                positions,
+                price_history,
+                sectors
+            )
+
+            # Generate narrative
+            narrative = generate_portfolio_narrative(metrics, positions)
+
+            # Get strengths and weaknesses
+            analysis = identify_portfolio_strengths_weaknesses(metrics)
+
+            # Format complete analysis
+            result = f"""# Portfolio Analysis
+
+{narrative}
+
+## Key Metrics
+
+**Return Metrics:**
+- Total Return: {metrics.total_return:+.2f}%
+- Annualized Return: {metrics.annualized_return:+.2f}%
+
+**Risk Metrics:**
+- Volatility: {metrics.volatility:.2f}%
+- Sharpe Ratio: {metrics.sharpe_ratio:.2f}
+- Beta: {metrics.beta:.2f}
+- Max Drawdown: {metrics.max_drawdown:.2f}%
+
+**Portfolio Composition:**
+- Number of Holdings: {len(positions)}
+- Diversification Score: {metrics.diversification_score:.0f}/100
+- Risk Level: {metrics.risk_level}
+
+## Strengths ✅
+""" + "\n".join([f"- {s}" for s in analysis['strengths']]) + """
+
+## Areas for Improvement ⚠️
+""" + "\n".join([f"- {w}" for w in analysis['weaknesses']])
+
+            if metrics.sector_concentration:
+                result += "\n\n## Sector Allocation\n"
+                for sector, pct in list(metrics.sector_concentration.items())[:5]:
+                    result += f"- {sector}: {pct:.1f}%\n"
+
+            return result
+
+        except Exception as e:
+            return f"Error analyzing portfolio: {str(e)}"
 
 
 def main():
