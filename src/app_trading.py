@@ -81,13 +81,24 @@ st.markdown("""
     }
 
     /* Streamlit elements styling */
-    .stMarkdown, .stText {
-        color: var(--text-primary);
+    .stMarkdown, .stText, p, span, div {
+        color: var(--text-primary) !important;
     }
 
     .stCaption {
         color: var(--text-secondary) !important;
         font-size: 0.875rem;
+    }
+
+    /* Force visible text in all markdown */
+    .stMarkdown p, .stMarkdown span, .stMarkdown div {
+        color: var(--text-primary) !important;
+    }
+
+    /* Subheaders */
+    .stMarkdown h3 {
+        color: var(--text-primary) !important;
+        font-weight: 600;
     }
 
     /* Metrics */
@@ -124,6 +135,9 @@ st.markdown("""
         border-color: var(--primary-color);
         box-shadow: var(--shadow-md);
         transform: translateY(-2px);
+    }
+    .stock-card div {
+        color: var(--text-primary) !important;
     }
 
     /* Price displays */
@@ -242,6 +256,8 @@ st.markdown("""
         padding: 0.625rem;
         font-family: 'Inter', sans-serif;
         transition: all 0.2s;
+        color: var(--text-primary) !important;
+        background-color: var(--bg-primary);
     }
 
     .stTextInput>div>div>input:focus,
@@ -249,6 +265,12 @@ st.markdown("""
     .stSelectbox>div>div>select:focus {
         border-color: var(--primary-color);
         box-shadow: 0 0 0 3px rgba(93, 95, 239, 0.1);
+    }
+
+    /* Input labels */
+    .stTextInput label, .stNumberInput label, .stSelectbox label, .stCheckbox label {
+        color: var(--text-primary) !important;
+        font-weight: 500;
     }
 
     /* Dividers */
@@ -338,6 +360,43 @@ st.markdown("""
 
     ::-webkit-scrollbar-thumb:hover {
         background: var(--text-muted);
+    }
+
+    /* Force text visibility everywhere */
+    * {
+        color: var(--text-primary);
+    }
+
+    /* Specific overrides for elements that should be visible */
+    .element-container, .stMarkdown, .stText, .stCaption,
+    button, input, select, textarea, label, a {
+        color: var(--text-primary) !important;
+    }
+
+    /* Make form labels visible */
+    [data-baseweb="form-control-label"] {
+        color: var(--text-primary) !important;
+    }
+
+    /* Navigation text */
+    .stRadio label {
+        color: var(--text-primary) !important;
+    }
+
+    /* Ensure white backgrounds for content areas */
+    [data-testid="stAppViewContainer"] {
+        background-color: var(--bg-tertiary);
+    }
+
+    /* Column content */
+    [data-testid="column"] {
+        background-color: transparent;
+    }
+
+    /* Strong/bold text */
+    strong, b {
+        color: var(--text-primary) !important;
+        font-weight: 700;
     }
 </style>
 """, unsafe_allow_html=True)
