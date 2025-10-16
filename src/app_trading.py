@@ -273,6 +273,27 @@ st.markdown("""
         font-weight: 500;
     }
 
+    /* Number input - force visible text */
+    .stNumberInput input {
+        color: var(--text-primary) !important;
+        background-color: var(--bg-primary) !important;
+        -webkit-text-fill-color: var(--text-primary) !important;
+    }
+
+    /* Text input - force visible text */
+    .stTextInput input {
+        color: var(--text-primary) !important;
+        background-color: var(--bg-primary) !important;
+        -webkit-text-fill-color: var(--text-primary) !important;
+    }
+
+    /* Input placeholder text */
+    .stTextInput input::placeholder,
+    .stNumberInput input::placeholder {
+        color: var(--text-muted) !important;
+        opacity: 0.7;
+    }
+
     /* Selectbox dropdown - force light theme */
     .stSelectbox [data-baseweb="select"] {
         background-color: var(--bg-primary) !important;
