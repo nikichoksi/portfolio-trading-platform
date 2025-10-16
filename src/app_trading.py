@@ -35,89 +35,309 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for trading platform look
+# Custom CSS for professional trading platform theme
 st.markdown("""
 <style>
-    /* Main styling */
+    /* Import modern font */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+    /* Global theme variables */
+    :root {
+        --primary-color: #5d5fef;
+        --primary-dark: #4547d4;
+        --success-color: #00C805;
+        --danger-color: #FF5000;
+        --text-primary: #1a1a1a;
+        --text-secondary: #666666;
+        --text-muted: #999999;
+        --bg-primary: #ffffff;
+        --bg-secondary: #f8f9fa;
+        --bg-tertiary: #f0f2f5;
+        --border-color: #e0e0e0;
+        --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
+        --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
+        --shadow-lg: 0 8px 24px rgba(0,0,0,0.12);
+    }
+
+    /* Override Streamlit defaults */
+    .main {
+        background-color: var(--bg-tertiary);
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+
+    /* Headers */
     .main-header {
         font-size: 2rem;
-        font-weight: bold;
-        color: #1a1a1a;
-        margin-bottom: 0.5rem;
+        font-weight: 700;
+        color: var(--text-primary);
+        margin-bottom: 1rem;
+        letter-spacing: -0.02em;
+    }
+
+    h1, h2, h3, h4, h5, h6 {
+        font-family: 'Inter', sans-serif;
+        color: var(--text-primary);
+        font-weight: 600;
+    }
+
+    /* Streamlit elements styling */
+    .stMarkdown, .stText {
+        color: var(--text-primary);
+    }
+
+    .stCaption {
+        color: var(--text-secondary) !important;
+        font-size: 0.875rem;
+    }
+
+    /* Metrics */
+    [data-testid="stMetricValue"] {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: var(--text-primary);
+    }
+
+    [data-testid="stMetricLabel"] {
+        color: var(--text-secondary);
+        font-weight: 500;
+        font-size: 0.875rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    [data-testid="stMetricDelta"] {
+        font-weight: 600;
     }
 
     /* Stock cards */
     .stock-card {
-        background: white;
+        background: var(--bg-primary);
         padding: 1rem;
-        border-radius: 8px;
-        border: 1px solid #e0e0e0;
+        border-radius: 12px;
+        border: 1px solid var(--border-color);
         margin-bottom: 1rem;
         cursor: pointer;
-        transition: all 0.2s;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: var(--shadow-sm);
     }
     .stock-card:hover {
-        border-color: #5d5fef;
-        box-shadow: 0 2px 8px rgba(93,95,239,0.15);
+        border-color: var(--primary-color);
+        box-shadow: var(--shadow-md);
+        transform: translateY(-2px);
     }
 
     /* Price displays */
     .price-up {
-        color: #00C805;
-        font-weight: 600;
+        color: var(--success-color);
+        font-weight: 700;
     }
     .price-down {
-        color: #FF5000;
-        font-weight: 600;
-    }
-
-    /* Sector headers */
-    .sector-header {
-        font-size: 1.3rem;
-        font-weight: 600;
-        color: #333;
-        margin: 1.5rem 0 1rem 0;
-        padding-bottom: 0.5rem;
-        border-bottom: 2px solid #5d5fef;
+        color: var(--danger-color);
+        font-weight: 700;
     }
 
     /* Order cards */
     .order-card {
-        background: #f8f9fa;
-        padding: 0.8rem;
-        border-radius: 6px;
-        border-left: 4px solid #5d5fef;
-        margin-bottom: 0.5rem;
+        background: var(--bg-secondary);
+        padding: 1rem;
+        border-radius: 10px;
+        border-left: 4px solid var(--primary-color);
+        margin-bottom: 0.75rem;
+        box-shadow: var(--shadow-sm);
+        transition: all 0.2s;
+    }
+    .order-card:hover {
+        box-shadow: var(--shadow-md);
     }
 
-    /* Buy/Sell buttons */
+    .order-card small {
+        color: var(--text-secondary);
+    }
+
+    /* Buttons */
     .stButton>button {
-        width: 100%;
         border-radius: 8px;
         font-weight: 600;
-        padding: 0.6rem 1rem;
+        padding: 0.625rem 1.25rem;
+        font-family: 'Inter', sans-serif;
+        transition: all 0.2s;
+        border: none;
+    }
+
+    .stButton>button[kind="primary"] {
+        background-color: var(--primary-color);
+        color: white;
+    }
+
+    .stButton>button[kind="primary"]:hover {
+        background-color: var(--primary-dark);
+        box-shadow: var(--shadow-md);
+    }
+
+    .stButton>button[kind="secondary"] {
+        background-color: var(--bg-secondary);
+        color: var(--text-primary);
+        border: 1px solid var(--border-color);
+    }
+
+    .stButton>button[kind="secondary"]:hover {
+        background-color: var(--bg-tertiary);
+        border-color: var(--primary-color);
     }
 
     /* Pattern badges */
     .pattern-badge {
         display: inline-block;
-        padding: 0.3rem 0.8rem;
-        border-radius: 12px;
-        font-size: 0.85rem;
+        padding: 0.5rem 1rem;
+        border-radius: 16px;
+        font-size: 0.875rem;
         font-weight: 600;
-        margin: 0.2rem;
+        margin: 0.25rem;
+        box-shadow: var(--shadow-sm);
+        transition: transform 0.2s;
+    }
+    .pattern-badge:hover {
+        transform: scale(1.05);
     }
     .pattern-bullish {
-        background: #d4edda;
+        background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
         color: #155724;
     }
     .pattern-bearish {
-        background: #f8d7da;
+        background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
         color: #721c24;
     }
     .pattern-continuation {
-        background: #d1ecf1;
+        background: linear-gradient(135deg, #d1ecf1 0%, #bee5eb 100%);
         color: #0c5460;
+    }
+
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 0.5rem;
+        background-color: var(--bg-secondary);
+        padding: 0.5rem;
+        border-radius: 10px;
+    }
+
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 8px;
+        padding: 0.625rem 1.25rem;
+        font-weight: 600;
+        color: var(--text-secondary);
+        transition: all 0.2s;
+    }
+
+    .stTabs [aria-selected="true"] {
+        background-color: var(--primary-color);
+        color: white;
+    }
+
+    /* Input fields */
+    .stTextInput>div>div>input,
+    .stNumberInput>div>div>input,
+    .stSelectbox>div>div>select {
+        border-radius: 8px;
+        border: 1px solid var(--border-color);
+        padding: 0.625rem;
+        font-family: 'Inter', sans-serif;
+        transition: all 0.2s;
+    }
+
+    .stTextInput>div>div>input:focus,
+    .stNumberInput>div>div>input:focus,
+    .stSelectbox>div>div>select:focus {
+        border-color: var(--primary-color);
+        box-shadow: 0 0 0 3px rgba(93, 95, 239, 0.1);
+    }
+
+    /* Dividers */
+    hr {
+        margin: 1.5rem 0;
+        border-color: var(--border-color);
+        opacity: 0.5;
+    }
+
+    /* Sidebar */
+    [data-testid="stSidebar"] {
+        background-color: var(--bg-primary);
+        border-right: 1px solid var(--border-color);
+    }
+
+    [data-testid="stSidebar"] h1 {
+        color: var(--primary-color);
+        font-weight: 700;
+    }
+
+    /* Expanders */
+    .streamlit-expanderHeader {
+        background-color: var(--bg-secondary);
+        border-radius: 8px;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+
+    /* Info/Warning/Error boxes */
+    .stAlert {
+        border-radius: 8px;
+        border-left-width: 4px;
+    }
+
+    /* Dataframes */
+    .dataframe {
+        font-family: 'Inter', sans-serif;
+        border-radius: 8px;
+        overflow: hidden;
+    }
+
+    .dataframe th {
+        background-color: var(--bg-secondary);
+        color: var(--text-primary);
+        font-weight: 600;
+        text-transform: uppercase;
+        font-size: 0.75rem;
+        letter-spacing: 0.5px;
+    }
+
+    /* Radio buttons */
+    .stRadio>div {
+        gap: 0.5rem;
+    }
+
+    .stRadio>div>label {
+        background-color: var(--bg-secondary);
+        padding: 0.625rem 1rem;
+        border-radius: 8px;
+        transition: all 0.2s;
+        cursor: pointer;
+    }
+
+    .stRadio>div>label:hover {
+        background-color: var(--bg-tertiary);
+    }
+
+    /* Spinner */
+    .stSpinner>div {
+        border-color: var(--primary-color) transparent transparent transparent;
+    }
+
+    /* Custom scrollbar */
+    ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+        background: var(--bg-tertiary);
+    }
+
+    ::-webkit-scrollbar-thumb {
+        background: var(--border-color);
+        border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+        background: var(--text-muted);
     }
 </style>
 """, unsafe_allow_html=True)
