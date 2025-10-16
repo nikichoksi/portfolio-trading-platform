@@ -14,8 +14,12 @@ from langchain.tools import Tool
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 
-from ..core.portfolio_metrics import PortfolioAnalyzer, PortfolioMetrics
-from ..utils.sector_analysis import SectorAnalyzer
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from core.portfolio_metrics import PortfolioAnalyzer, PortfolioMetrics
+from utils.sector_analysis import SectorAnalyzer
 
 # Load environment variables
 load_dotenv()
@@ -29,7 +33,7 @@ class PortfolioInsightAgent:
 
     def __init__(
         self,
-        model: str = "claude-3-5-sonnet-20241022",
+        model: str = "claude-3-haiku-20240307",
         temperature: float = 0.1,
         use_openai: bool = False
     ):

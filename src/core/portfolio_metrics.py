@@ -98,13 +98,18 @@ class PortfolioAnalyzer:
         Returns:
             DataFrame with adjusted close prices
         """
-        data = yf.download(tickers, period=period, progress=False)
+        data = yf.download(tickers, period=period, progress=False, auto_adjust=True)
 
         if len(tickers) == 1:
-            prices = data['Adj Close'].to_frame()
+            # For single ticker, data is a DataFrame with Close column
+            prices = data['Close'].to_frame() if 'Close' in data.columns else data.to_frame()
             prices.columns = tickers
         else:
-            prices = data['Adj Close']
+            # For multiple tickers, get Close prices
+            if 'Close' in data.columns:
+                prices = data['Close']
+            else:
+                prices = data
 
         return prices.dropna()
 
@@ -179,9 +184,11 @@ class PortfolioAnalyzer:
             market_data = yf.download(
                 self.market_ticker,
                 period=period,
-                progress=False
+                progress=False,
+                auto_adjust=True
             )
-            market_returns = market_data['Adj Close'].pct_change().dropna()
+            close_col = 'Close' if 'Close' in market_data.columns else 'Adj Close'
+            market_returns = market_data[close_col].pct_change().dropna()
 
             # Align dates
             common_dates = portfolio_returns.index.intersection(market_returns.index)
@@ -399,9 +406,11 @@ class PortfolioAnalyzer:
             market_data = yf.download(
                 self.market_ticker,
                 period=period,
-                progress=False
+                progress=False,
+                auto_adjust=True
             )
-            market_returns = market_data['Adj Close'].pct_change().dropna()
+            close_col = 'Close' if 'Close' in market_data.columns else 'Adj Close'
+            market_returns = market_data[close_col].pct_change().dropna()
 
             # Align dates
             common_dates = portfolio_returns.index.intersection(market_returns.index)
