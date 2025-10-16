@@ -257,7 +257,7 @@ st.markdown("""
         font-family: 'Inter', sans-serif;
         transition: all 0.2s;
         color: var(--text-primary) !important;
-        background-color: var(--bg-primary);
+        background-color: var(--bg-primary) !important;
     }
 
     .stTextInput>div>div>input:focus,
@@ -271,6 +271,46 @@ st.markdown("""
     .stTextInput label, .stNumberInput label, .stSelectbox label, .stCheckbox label {
         color: var(--text-primary) !important;
         font-weight: 500;
+    }
+
+    /* Selectbox dropdown - force light theme */
+    .stSelectbox [data-baseweb="select"] {
+        background-color: var(--bg-primary) !important;
+    }
+
+    .stSelectbox [data-baseweb="select"] > div {
+        background-color: var(--bg-primary) !important;
+        color: var(--text-primary) !important;
+    }
+
+    /* Dropdown menu */
+    [role="listbox"] {
+        background-color: var(--bg-primary) !important;
+    }
+
+    [role="option"] {
+        background-color: var(--bg-primary) !important;
+        color: var(--text-primary) !important;
+    }
+
+    [role="option"]:hover {
+        background-color: var(--bg-secondary) !important;
+        color: var(--text-primary) !important;
+    }
+
+    [aria-selected="true"] {
+        background-color: var(--primary-color) !important;
+        color: white !important;
+    }
+
+    /* Select value display */
+    .stSelectbox [data-baseweb="select"] [data-baseweb="select-value"] {
+        color: var(--text-primary) !important;
+    }
+
+    /* Placeholder text */
+    .stSelectbox [data-baseweb="select"] input {
+        color: var(--text-primary) !important;
     }
 
     /* Dividers */
