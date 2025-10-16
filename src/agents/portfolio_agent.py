@@ -332,23 +332,24 @@ Remember: You're providing analysis and education, not financial advice or recom
 
         return response, chat_history
 
-    def analyze_live_portfolio(self) -> str:
+    def analyze_live_portfolio(self):
         """
         Analyze the current portfolio from the service.
         Requires service to be set during initialization.
+        Returns tuple of (text_analysis, metrics, positions) for rendering with charts.
         """
         if not self.service:
-            return "Portfolio service not initialized. Cannot analyze live portfolio."
+            return ("Portfolio service not initialized. Cannot analyze live portfolio.", None, None)
 
         if LEGACY_MODE:
-            return "Live portfolio analysis requires updated analytics module."
+            return ("Live portfolio analysis requires updated analytics module.", None, None)
 
         try:
             # Get current positions
             positions = self.service.get_positions()
 
             if not positions:
-                return "Your portfolio is empty. Start trading to build positions for analysis."
+                return ("Your portfolio is empty. Start trading to build positions for analysis.", None, None)
 
             # Get price history for all positions
             tickers = [p.ticker for p in positions]
@@ -400,10 +401,10 @@ Remember: You're providing analysis and education, not financial advice or recom
 - Diversification Score: {metrics.diversification_score:.0f}/100
 - Risk Level: {metrics.risk_level}
 
-## Strengths ✅
+## Strengths
 """ + "\n".join([f"- {s}" for s in analysis['strengths']]) + """
 
-## Areas for Improvement ⚠️
+## Areas for Improvement
 """ + "\n".join([f"- {w}" for w in analysis['weaknesses']])
 
             if metrics.sector_concentration:
@@ -411,10 +412,10 @@ Remember: You're providing analysis and education, not financial advice or recom
                 for sector, pct in list(metrics.sector_concentration.items())[:5]:
                     result += f"- {sector}: {pct:.1f}%\n"
 
-            return result
+            return (result, metrics, positions)
 
         except Exception as e:
-            return f"Error analyzing portfolio: {str(e)}"
+            return (f"Error analyzing portfolio: {str(e)}", None, None)
 
 
 def main():

@@ -103,7 +103,7 @@ class OrderExecutionService:
                 if success:
                     # Mark order as filled
                     self.db.delete_order(order.id)
-                    return True, f"✅ Bought {order.quantity:.2f} shares of {order.ticker} at ${execution_price:.2f}"
+                    return True, f"Bought {order.quantity:.2f} shares of {order.ticker} at ${execution_price:.2f}"
                 else:
                     return False, msg
 
@@ -120,7 +120,7 @@ class OrderExecutionService:
                 if success:
                     # Mark order as filled
                     self.db.delete_order(order.id)
-                    return True, f"✅ Sold {order.quantity:.2f} shares of {order.ticker} at ${execution_price:.2f}"
+                    return True, f"Sold {order.quantity:.2f} shares of {order.ticker} at ${execution_price:.2f}"
                 else:
                     return False, msg
 
@@ -198,20 +198,20 @@ def get_order_status_message(order: PendingOrder, current_price: float) -> str:
         Status message string
     """
     if order.limit_price is None:
-        return "⏳ Market order - will execute on next check"
+        return "PENDING: Market order - will execute on next check"
 
     if order.order_type == 'BUY':
         if current_price <= order.limit_price:
-            return f"✅ Ready to execute! Price ${current_price:.2f} ≤ Limit ${order.limit_price:.2f}"
+            return f"READY: Ready to execute! Price ${current_price:.2f} ≤ Limit ${order.limit_price:.2f}"
         else:
             diff = current_price - order.limit_price
-            return f"⏳ Waiting... Price ${current_price:.2f} is ${diff:.2f} above limit"
+            return f"PENDING: Waiting... Price ${current_price:.2f} is ${diff:.2f} above limit"
 
     elif order.order_type == 'SELL':
         if current_price >= order.limit_price:
-            return f"✅ Ready to execute! Price ${current_price:.2f} ≥ Limit ${order.limit_price:.2f}"
+            return f"READY: Ready to execute! Price ${current_price:.2f} ≥ Limit ${order.limit_price:.2f}"
         else:
             diff = order.limit_price - current_price
-            return f"⏳ Waiting... Price ${current_price:.2f} is ${diff:.2f} below limit"
+            return f"PENDING: Waiting... Price ${current_price:.2f} is ${diff:.2f} below limit"
 
     return "Unknown status"

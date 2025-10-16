@@ -30,7 +30,7 @@ load_dotenv()
 # Page configuration
 st.set_page_config(
     page_title="Portfolio Trading Platform",
-    page_icon="📈",
+    page_icon="Chart",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -219,14 +219,14 @@ def create_candlestick_chart_with_patterns(df: pd.DataFrame, ticker: str, patter
 
 def render_market_view():
     """Render live market view grouped by sector"""
-    st.markdown('<div class="main-header">📊 Live Market</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">Live Market</div>', unsafe_allow_html=True)
 
     service = st.session_state.service
 
     # Search bar
     col1, col2 = st.columns([4, 1])
     with col1:
-        search_query = st.text_input("🔍 Search stocks...", placeholder="Search by ticker or sector", key="market_search")
+        search_query = st.text_input("Search: Search stocks...", placeholder="Search by ticker or sector", key="market_search")
     with col2:
         view_mode = st.selectbox("View", ["Popular", "All Sectors"], key="market_view_mode")
 
@@ -258,7 +258,7 @@ def render_market_view():
 
     if view_mode == "Popular":
         # Show popular stocks
-        st.subheader("🔥 Most Popular Stocks")
+        st.subheader(" Most Popular Stocks")
         popular = get_popular_stocks(30)
 
         with st.spinner("Fetching live prices..."):
@@ -275,7 +275,7 @@ def render_market_view():
     else:
         # Show all sectors
         for sector, tickers in all_market_stocks.items():
-            with st.expander(f"📁 {sector} ({len(tickers)} stocks)", expanded=False):
+            with st.expander(f" {sector} ({len(tickers)} stocks)", expanded=False):
                 # Fetch prices for this sector (in batches for performance)
                 batch_size = 20
                 for i in range(0, min(len(tickers), 60), batch_size):  # Show first 60 per sector
@@ -404,7 +404,7 @@ def render_stock_detail():
     st.divider()
 
     # Main content area
-    tab1, tab2, tab3 = st.tabs(["📈 Chart", "💼 Trade", "📋 Orders"])
+    tab1, tab2, tab3 = st.tabs(["Chart", "Trade", "Orders"])
 
     # TAB 1: CHART ANALYSIS
     with tab1:
@@ -456,7 +456,7 @@ def render_stock_detail():
 
             # Display detected patterns
             if filtered_patterns:
-                st.subheader("🎯 Key Patterns Detected")
+                st.subheader(" Key Patterns Detected")
 
                 # Display in a grid layout with max 5 columns
                 num_cols = min(len(filtered_patterns), 5)
@@ -478,7 +478,7 @@ def render_stock_detail():
             st.plotly_chart(fig, use_container_width=True)
 
             # Technical indicators
-            st.subheader("📊 Technical Indicators")
+            st.subheader("Technical Indicators")
 
             col1, col2, col3, col4 = st.columns(4)
 
@@ -508,7 +508,7 @@ def render_stock_detail():
 
         # BUY SECTION
         with col1:
-            st.markdown("### 💚 Buy")
+            st.markdown("### Buy")
 
             with st.form(f"quick_buy_{ticker}"):
                 quantity = st.number_input("Quantity", min_value=0.01, value=1.0, step=0.01)
@@ -523,7 +523,7 @@ def render_stock_detail():
                 total = quantity * (limit_price if limit_price else current_price)
                 st.markdown(f"**Total: ${total:.2f}**")
 
-                submit = st.form_submit_button("🛒 Buy Now", use_container_width=True)
+                submit = st.form_submit_button("Buy Now", use_container_width=True)
 
                 if submit:
                     if use_limit:
@@ -544,7 +544,7 @@ def render_stock_detail():
 
         # SELL SECTION
         with col2:
-            st.markdown("### ❤️ Sell")
+            st.markdown("### Sell")
 
             # Check current position
             positions = service.get_positions()
@@ -571,7 +571,7 @@ def render_stock_detail():
                     total_sell = sell_qty * (limit_price_sell if limit_price_sell else current_price)
                     st.markdown(f"**Total: ${total_sell:.2f}**")
 
-                    submit_sell = st.form_submit_button("💰 Sell Now", use_container_width=True)
+                    submit_sell = st.form_submit_button("Sell Now", use_container_width=True)
 
                     if submit_sell:
                         if use_limit_sell:
@@ -599,12 +599,12 @@ def render_stock_detail():
 
         with col2:
             # Check and execute orders button
-            if st.button("🔄 Check & Execute Orders", use_container_width=True, type="primary"):
+            if st.button("Check & Execute Orders", use_container_width=True, type="primary"):
                 execution_service = OrderExecutionService(service)
                 executed = execution_service.check_and_execute_orders()
 
                 if executed:
-                    st.success(f"✅ Executed {len(executed)} order(s)!")
+                    st.success(f"Executed {len(executed)} order(s)!")
                     for order_id, msg, success in executed:
                         if success:
                             st.info(msg)
@@ -626,7 +626,7 @@ def render_stock_detail():
                 col1, col2, col3 = st.columns([3, 1, 1])
 
                 with col1:
-                    order_type_color = "🟢" if order.order_type == 'BUY' else "🔴"
+                    order_type_color = "[BUY]" if order.order_type == 'BUY' else "[SELL]"
                     limit_display = f"@ ${order.limit_price:.2f}" if order.limit_price else "MARKET"
                     st.markdown(f"""
                     <div class="order-card">
@@ -674,7 +674,7 @@ def render_stock_detail():
 
 def render_portfolio_view():
     """Render portfolio overview with AI assistant"""
-    st.markdown('<div class="main-header">💼 My Portfolio</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">My Portfolio</div>', unsafe_allow_html=True)
 
     service = st.session_state.service
     summary = service.get_portfolio_summary()
@@ -696,7 +696,7 @@ def render_portfolio_view():
     st.divider()
 
     # Tabs for holdings and AI assistant
-    tab1, tab2 = st.tabs(["📊 Holdings", "🤖 AI Assistant"])
+    tab1, tab2 = st.tabs(["Holdings", "AI Assistant"])
 
     with tab1:
         # Holdings table
@@ -706,7 +706,8 @@ def render_portfolio_view():
             for position in summary['positions']:
                 col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
 
-                pnl_color = "🟢" if position.unrealized_pnl >= 0 else "🔴"
+                pnl_symbol = "+" if position.unrealized_pnl >= 0 else "-"
+                pnl_color = "normal" if position.unrealized_pnl >= 0 else "inverse"
 
                 with col1:
                     st.markdown(f"**{position.ticker}**")
@@ -719,8 +720,8 @@ def render_portfolio_view():
                     st.metric("Value", f"${position.market_value:.2f}")
 
                 with col4:
-                    st.markdown(f"{pnl_color} **${position.unrealized_pnl:.2f}**")
-                    st.caption(f"({position.unrealized_pnl_pct:+.2f}%)")
+                    st.metric("P&L", f"${abs(position.unrealized_pnl):.2f}",
+                             f"{position.unrealized_pnl_pct:+.2f}%", delta_color=pnl_color)
 
                 if st.button("View Details", key=f"view_detail_{position.ticker}"):
                     st.session_state.selected_stock = position.ticker
@@ -733,7 +734,7 @@ def render_portfolio_view():
 
     with tab2:
         # AI Portfolio Assistant
-        st.subheader("💬 Portfolio Insight Agent")
+        st.subheader("Portfolio Insight Agent")
         st.caption("Ask questions about your portfolio risk, diversification, and performance")
 
         # Initialize agent if not exists
@@ -747,21 +748,68 @@ def render_portfolio_view():
 
         # Quick analysis button
         if summary['positions']:
-            if st.button("📊 Analyze My Portfolio", use_container_width=True, type="primary"):
+            if st.button("Analyze My Portfolio", use_container_width=True, type="primary"):
                 with st.spinner("Analyzing your portfolio..."):
                     try:
-                        analysis = st.session_state.agent.analyze_live_portfolio()
+                        analysis, metrics, positions = st.session_state.agent.analyze_live_portfolio()
+
+                        # Display text analysis
                         st.markdown(analysis)
+
+                        # Display visualizations
+                        if metrics and positions:
+                            st.divider()
+                            st.subheader("Portfolio Visualizations")
+
+                            col1, col2 = st.columns(2)
+
+                            with col1:
+                                # Holdings pie chart
+                                holdings_data = {p.ticker: p.market_value for p in positions}
+                                fig_holdings = px.pie(
+                                    values=list(holdings_data.values()),
+                                    names=list(holdings_data.keys()),
+                                    title="Portfolio Allocation by Holdings"
+                                )
+                                st.plotly_chart(fig_holdings, use_container_width=True)
+
+                            with col2:
+                                # Sector pie chart
+                                if metrics.sector_concentration:
+                                    fig_sectors = px.pie(
+                                        values=list(metrics.sector_concentration.values()),
+                                        names=list(metrics.sector_concentration.keys()),
+                                        title="Portfolio Allocation by Sector"
+                                    )
+                                    st.plotly_chart(fig_sectors, use_container_width=True)
+
+                            # Risk metrics bar chart
+                            st.subheader("Risk Metrics Comparison")
+                            risk_metrics_data = {
+                                "Volatility": metrics.volatility,
+                                "Beta": metrics.beta * 10,  # Scale for visibility
+                                "Max Drawdown": abs(metrics.max_drawdown),
+                                "Diversification": metrics.diversification_score
+                            }
+
+                            fig_risk = px.bar(
+                                x=list(risk_metrics_data.keys()),
+                                y=list(risk_metrics_data.values()),
+                                title="Risk Profile (scaled for comparison)",
+                                labels={'x': 'Metric', 'y': 'Value'}
+                            )
+                            st.plotly_chart(fig_risk, use_container_width=True)
+
                     except Exception as e:
                         st.error(f"Analysis error: {str(e)}")
 
         st.divider()
 
         # Chat interface
-        st.markdown("**💭 Ask a Question**")
+        st.markdown("**Ask a Question**")
 
         # Example queries
-        with st.expander("💡 Example Questions"):
+        with st.expander("Example Questions"):
             st.markdown("""
             - "What's the overall risk level of my portfolio?"
             - "How diversified am I?"
@@ -806,7 +854,7 @@ Question: {user_question}"""
 
         # Show chat history
         if st.session_state.chat_history:
-            with st.expander("💬 Chat History", expanded=False):
+            with st.expander("Chat History", expanded=False):
                 for idx, msg in enumerate(st.session_state.chat_history):
                     if msg.type == "human":
                         st.markdown(f"**You:** {msg.content}")
@@ -822,7 +870,7 @@ def main():
 
     # Sidebar
     with st.sidebar:
-        st.title("🏦 Trading Platform")
+        st.title("Trading Platform")
 
         # Navigation
         # Only change view_mode if user clicks navigation, not on every rerun
@@ -831,7 +879,7 @@ def main():
         view = st.radio(
             "Navigate",
             options=["market", "portfolio", "settings"],
-            format_func=lambda x: {"market": "📊 Market", "portfolio": "💼 Portfolio", "settings": "⚙️ Settings"}[x],
+            format_func=lambda x: {"market": "Market", "portfolio": "Portfolio", "settings": "Settings"}[x],
             key="nav",
             index=["market", "portfolio", "settings"].index(current_nav) if current_nav in ["market", "portfolio", "settings"] else 0
         )
@@ -858,7 +906,7 @@ def main():
         # Pending orders count
         all_orders = service.db.get_all_pending_orders()
         if all_orders:
-            st.info(f"📋 {len(all_orders)} pending orders")
+            st.info(f"{len(all_orders)} pending orders")
 
     # Main content routing
     if st.session_state.view_mode == "stock_detail" and st.session_state.selected_stock:
@@ -876,7 +924,7 @@ def main():
 
 def render_settings():
     """Render settings page"""
-    st.markdown('<div class="main-header">⚙️ Settings</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">Settings</div>', unsafe_allow_html=True)
 
     service = st.session_state.service
 

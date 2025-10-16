@@ -288,7 +288,7 @@ def generate_portfolio_narrative(metrics: PortfolioMetrics, positions: List) -> 
     elif metrics.diversification_score >= 40:
         narrative_parts.append("Your portfolio shows moderate diversification but could be improved.")
     else:
-        narrative_parts.append("⚠️ Your portfolio lacks diversification and may be exposed to concentrated risk.")
+        narrative_parts.append("WARNING: Your portfolio lacks diversification and may be exposed to concentrated risk.")
 
     # Sector concentration
     if metrics.sector_concentration:
@@ -299,7 +299,7 @@ def generate_portfolio_narrative(metrics: PortfolioMetrics, positions: List) -> 
         )
 
         if top_sector[1] > 50:
-            narrative_parts.append("⚠️ This represents significant sector concentration risk.")
+            narrative_parts.append("WARNING: This represents significant sector concentration risk.")
 
     # Performance metrics
     if metrics.sharpe_ratio > 1.5:
