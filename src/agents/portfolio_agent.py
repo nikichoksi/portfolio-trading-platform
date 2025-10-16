@@ -19,12 +19,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 try:
-    from core.portfolio_metrics import PortfolioAnalyzer as CoreAnalyzer, PortfolioMetrics as CoreMetrics
-    from utils.sector_analysis import SectorAnalyzer
-    LEGACY_MODE = True
-except ImportError:
     from utils.portfolio_analytics import PortfolioAnalyzer, PortfolioMetrics, generate_portfolio_narrative, identify_portfolio_strengths_weaknesses
     LEGACY_MODE = False
+except ImportError:
+    from core.portfolio_metrics import PortfolioAnalyzer as CoreAnalyzer, PortfolioMetrics as CoreMetrics
+    from utils.sector_analysis import SectorAnalyzer
+    PortfolioMetrics = CoreMetrics  # Alias for consistency
+    LEGACY_MODE = True
 
 # Load environment variables
 load_dotenv()
@@ -167,12 +168,14 @@ class PortfolioInsightAgent:
 
     def _format_metrics(self, metrics: PortfolioMetrics) -> str:
         """Format portfolio metrics into a readable string"""
-        holdings_str = ", ".join([f"{k}: {v:.1%}" for k, v in metrics.holdings.items()])
+        # Handle both legacy and new metrics formats
+        if LEGACY_MODE:
+            holdings_str = ", ".join([f"{k}: {v:.1%}" for k, v in metrics.holdings.items()])
 
-        # Format advanced metrics if available
-        advanced_metrics = ""
-        if metrics.sortino_ratio is not None:
-            advanced_metrics = f"""
+            # Format advanced metrics if available
+            advanced_metrics = ""
+            if metrics.sortino_ratio is not None:
+                advanced_metrics = f"""
 Advanced Risk-Adjusted Metrics:
 - Sortino Ratio: {metrics.sortino_ratio:.3f}
 - Calmar Ratio: {metrics.calmar_ratio:.3f}
@@ -180,7 +183,7 @@ Advanced Risk-Adjusted Metrics:
 - Downside Deviation: {metrics.downside_deviation:.2%}
 """
 
-        return f"""
+            return f"""
 Portfolio Analysis Results:
 ==========================
 
@@ -201,6 +204,35 @@ Risk Metrics:
 Interpretation:
 - Sharpe Ratio: {'Excellent (>2)' if metrics.sharpe_ratio > 2 else 'Good (1-2)' if metrics.sharpe_ratio > 1 else 'Fair (0-1)' if metrics.sharpe_ratio > 0 else 'Poor (<0)'}
 - Volatility: {'High (>25%)' if metrics.annual_volatility > 0.25 else 'Moderate (15-25%)' if metrics.annual_volatility > 0.15 else 'Low (<15%)'}
+- Beta: {'Aggressive (>1.2)' if metrics.beta > 1.2 else 'Market-like (0.8-1.2)' if metrics.beta > 0.8 else 'Defensive (<0.8)'}
+"""
+        else:
+            # New analytics format
+            top_holdings_str = ", ".join([f"{ticker}: {weight:.1%}" for ticker, weight in metrics.top_holdings[:3]])
+
+            return f"""
+Portfolio Analysis Results:
+==========================
+
+Top Holdings: {top_holdings_str}
+
+Risk-Return Metrics:
+- Total Return: {metrics.total_return:.2f}%
+- Annualized Return: {metrics.annualized_return:.2f}%
+- Volatility: {metrics.volatility:.2f}%
+- Sharpe Ratio: {metrics.sharpe_ratio:.3f}
+- Beta: {metrics.beta:.3f}
+
+Risk Metrics:
+- Maximum Drawdown: {metrics.max_drawdown:.2f}%
+
+Diversification:
+- Diversification Score: {metrics.diversification_score:.0f}/100
+- Risk Level: {metrics.risk_level}
+
+Interpretation:
+- Sharpe Ratio: {'Excellent (>2)' if metrics.sharpe_ratio > 2 else 'Good (1-2)' if metrics.sharpe_ratio > 1 else 'Fair (0-1)' if metrics.sharpe_ratio > 0 else 'Poor (<0)'}
+- Volatility: {'High (>30%)' if metrics.volatility > 30 else 'Moderate (15-30%)' if metrics.volatility > 15 else 'Low (<15%)'}
 - Beta: {'Aggressive (>1.2)' if metrics.beta > 1.2 else 'Market-like (0.8-1.2)' if metrics.beta > 0.8 else 'Defensive (<0.8)'}
 """
 
