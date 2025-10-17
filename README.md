@@ -1,14 +1,62 @@
-# Portfolio Insight Agent
+# Portfolio Trading Platform with Multi-Agent Risk Analysis
 
-An AI-powered conversational agent that provides comprehensive portfolio risk-return analysis using LangChain and modern LLMs.
+A professional trading platform (Robinhood/Zerodha style) with integrated AI-powered risk analysis agents built using LangChain and modern LLMs.
 
-## Features
+## Multi-Agent Architecture
 
-- **Natural Language Portfolio Analysis**: Describe your portfolio in plain English and get detailed risk metrics
-- **Core Financial Metrics**: Volatility, Beta, Sharpe Ratio, Maximum Drawdown, VaR
-- **Narrative Explanations**: AI-generated insights about your portfolio's characteristics
-- **Strength & Weakness Identification**: Actionable feedback on your allocation
-- **Interactive Streamlit UI**: Easy-to-use conversational interface
+This platform features specialized AI agents for comprehensive portfolio analysis:
+
+### 1. Portfolio Insight Agent (Implemented)
+**Conversational portfolio analysis**
+
+Role: Interprets user portfolios and provides comprehensive risk-return analysis
+- Parses natural language portfolio descriptions
+- Calculates core metrics (volatility, beta, Sharpe ratio, max drawdown)
+- Generates narrative explanations of portfolio characteristics
+- Identifies strengths and weaknesses in current allocation
+- Interactive visualizations (pie charts, risk metrics)
+
+Example Queries:
+- "Analyze my portfolio of AAPL, MSFT, and TSLA"
+- "What's the overall risk level of my investments?"
+- "How diversified is my portfolio?"
+
+### 2. Risk Profiler Agent (Coming Soon)
+**Risk tolerance assessment and matching**
+
+Role: Evaluates if portfolio aligns with investor's risk profile
+- Assesses portfolio risk characteristics (volatility, concentration, sector exposure)
+- Compares against risk tolerance benchmarks (conservative/moderate/aggressive)
+- Identifies mismatches between risk tolerance and actual portfolio risk
+- Suggests risk-adjusted alternatives
+
+Example Queries:
+- "Is this portfolio suitable for a conservative investor?"
+- "Does my allocation match a moderate risk profile?"
+- "Am I taking too much risk for my age?"
+
+### 3. Scenario Simulator Agent (Coming Soon)
+**What-if analysis and stress testing**
+
+Role: Tests portfolio performance under hypothetical market conditions
+- Runs scenario simulations (market crashes, sector declines, rate changes)
+- Performs historical stress tests (2008 crisis, COVID crash, dot-com bubble)
+- Monte Carlo simulations for probabilistic outcomes
+- Calculates conditional VaR and expected shortfall
+
+Example Queries:
+- "What happens to my portfolio if tech stocks drop 20%?"
+- "How would my investments perform in a recession?"
+- "Simulate a 10% market correction"
+
+## Platform Features
+
+- **Live Market View**: Real-time stock prices organized by sectors
+- **Technical Analysis**: Candlestick charts with pattern detection (Head & Shoulders, Double Top/Bottom, etc.)
+- **Quick Trade**: Market and limit orders with instant execution
+- **Order Management**: Pending orders with automatic execution when conditions are met
+- **Portfolio Overview**: Track holdings, P&L, and performance metrics
+- **AI Risk Analysis**: Powered by Portfolio Insight Agent with interactive visualizations
 
 ## Quick Start
 
@@ -38,7 +86,10 @@ cp .env.example .env
 ### Running the Application
 
 ```bash
-# Run Streamlit UI
+# Run the Trading Platform (Main Application)
+streamlit run src/app_trading.py
+
+# Or run the standalone Portfolio Insight Agent
 streamlit run src/app.py
 
 # Or use the agent programmatically
@@ -50,14 +101,23 @@ python src/agents/portfolio_agent.py
 ```
 portfolio-insight-agent/
 ├── src/
-│   ├── agents/          # LangChain agent implementations
-│   ├── core/            # Portfolio analysis logic
-│   ├── utils/           # Helper functions
-│   └── app.py           # Streamlit application
-├── tests/               # Test suite
-├── data/                # Sample portfolios and cache
-├── config/              # Configuration files
-└── CLAUDE.md            # Development guide
+│   ├── agents/              # LangChain agent implementations
+│   │   └── portfolio_agent.py
+│   ├── database/            # SQLite database models
+│   │   └── models.py
+│   ├── services/            # Business logic services
+│   │   ├── portfolio_service.py
+│   │   └── order_execution.py
+│   ├── utils/               # Helper functions
+│   │   ├── portfolio_analytics.py
+│   │   ├── pattern_detection.py
+│   │   └── market_data.py
+│   ├── app_trading.py       # Main trading platform
+│   └── app.py               # Standalone agent UI
+├── tests/                   # Test suite
+├── data/                    # Database and cache files
+├── config/                  # Configuration files
+└── dev-notes.md             # Development guide
 ```
 
 ## Example Usage

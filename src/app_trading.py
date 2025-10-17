@@ -1035,8 +1035,8 @@ def render_portfolio_view():
 
     st.divider()
 
-    # Tabs for holdings and AI assistant
-    tab1, tab2 = st.tabs(["Holdings", "AI Assistant"])
+    # Tabs for holdings and Portfolio Insight Agent
+    tab1, tab2 = st.tabs(["Holdings", "Portfolio Insight Agent"])
 
     with tab1:
         # Holdings table
