@@ -11,11 +11,11 @@
 ```
 main (production code)
   │
-  ├── development (integration)
-  │     │
-  │     ├── swara (Swara's work)
-  │     │
-  │     └── princy (Princy's work)
+  ├── niki (Niki's work)
+  │
+  ├── swara (Swara's work)
+  │
+  └── princy (Princy's work)
 ```
 
 ## Quick Start
@@ -38,22 +38,27 @@ cp .env.example .env
 # Add your API keys
 ```
 
-### 2. Create Your Branch
+### 2. Work on Your Branch
+
+**Niki:**
+```bash
+git checkout niki
+git pull origin niki
+# Start coding!
+```
 
 **Swara:**
 ```bash
-git checkout development
-git pull origin development
-git checkout -b swara
-git push -u origin swara
+git checkout swara
+git pull origin swara
+# Start coding!
 ```
 
 **Princy:**
 ```bash
-git checkout development
-git pull origin development
-git checkout -b princy
-git push -u origin princy
+git checkout princy
+git pull origin princy
+# Start coding!
 ```
 
 ## Daily Workflow
@@ -62,10 +67,10 @@ git push -u origin princy
 
 ```bash
 # 1. Go to your branch
-git checkout swara  # or princy
+git checkout niki  # or swara, or princy
 
 # 2. Get latest changes
-git pull origin development
+git pull origin niki  # or swara, or princy
 
 # 3. Code!
 ```
@@ -83,7 +88,7 @@ git add -A
 git commit -m "feat: Added risk assessment function"
 
 # 4. Push
-git push origin swara  # or princy
+git push origin niki  # or swara, or princy
 ```
 
 ### Commit Message Tips
@@ -102,10 +107,10 @@ Examples:
 
 ### Create Pull Request
 
-1. Push your branch: `git push origin swara`
+1. Push your branch: `git push origin niki` (or swara, or princy)
 2. Go to: https://github.com/nikichoksi/portfolio-trading-platform
 3. Click "Pull requests" → "New pull request"
-4. Select: `development` ← `swara` (or `princy`)
+4. Select: `main` ← `niki` (or swara, or princy)
 5. Write description
 6. Request review from teammates
 7. Wait for approval
@@ -137,15 +142,15 @@ tests/test_scenario_simulator.py
 ### If You Get Conflicts
 
 ```bash
-git checkout development
-git pull origin development
-git checkout swara  # your branch
-git merge development
+git checkout main
+git pull origin main
+git checkout niki  # or swara, or princy
+git merge main
 
 # Fix conflicts in files
 git add [fixed-files]
 git commit -m "merge: Resolve conflicts"
-git push origin swara
+git push origin niki  # or swara, or princy
 ```
 
 ## Communication
@@ -176,11 +181,11 @@ git branch
 # See changes
 git status
 
-# Pull latest
-git pull origin development
+# Pull latest from your branch
+git pull origin niki  # or swara, or princy
 
 # Switch branch
-git checkout swara
+git checkout niki  # or swara, or princy
 
 # Undo last commit (keep changes)
 git reset --soft HEAD~1
