@@ -369,7 +369,9 @@ class SnowflakeWarehouse:
         cursor = conn.cursor()
 
         try:
-            # Insert snapshot
+            # Insert snapshot and get generated ID
+            snapshot_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
             cursor.execute("""
                 INSERT INTO portfolio_snapshots
                 (snapshot_date, total_market_value, total_cost_basis, total_unrealized_pnl,
@@ -377,7 +379,7 @@ class SnowflakeWarehouse:
                 VALUES (%(snapshot_date)s, %(total_market_value)s, %(total_cost_basis)s,
                         %(total_unrealized_pnl)s, %(total_unrealized_pnl_pct)s, %(num_positions)s)
             """, {
-                'snapshot_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'snapshot_date': snapshot_date,
                 'total_market_value': summary['total_market_value'],
                 'total_cost_basis': summary['total_cost_basis'],
                 'total_unrealized_pnl': summary['total_unrealized_pnl'],
@@ -385,8 +387,19 @@ class SnowflakeWarehouse:
                 'num_positions': summary['num_positions']
             })
 
-            # Get the snapshot_id
-            snapshot_id = cursor.lastrowid
+            # Get the snapshot_id using a query (Snowflake doesn't support lastrowid)
+            cursor.execute("""
+                SELECT snapshot_id FROM portfolio_snapshots
+                WHERE snapshot_date = %(snapshot_date)s
+                ORDER BY created_at DESC
+                LIMIT 1
+            """, {'snapshot_date': snapshot_date})
+
+            result = cursor.fetchone()
+            snapshot_id = result[0] if result else None
+
+            if not snapshot_id:
+                raise Exception("Failed to retrieve snapshot_id")
 
             # Insert positions
             for pos in positions:
