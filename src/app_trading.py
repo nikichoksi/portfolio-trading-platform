@@ -23,6 +23,11 @@ from database.models import PendingOrder
 from utils.pattern_detection import PatternDetector, get_pattern_marker_style
 from utils.market_data import get_all_market_stocks, get_popular_stocks, search_stocks
 from agents.portfolio_agent import PortfolioInsightAgent
+from agents.risk_profiler_agent import RiskProfilerAgent
+from agents.scenario_simulator_agent import ScenarioSimulatorAgent
+from agents.rebalancing_strategist_agent import RebalancingStrategistAgent
+from agents.comparative_analytics_agent import ComparativeAnalyticsAgent
+from agents.temporal_intelligence_agent import TemporalIntelligenceAgent
 
 # Load environment variables
 load_dotenv()
@@ -250,7 +255,8 @@ st.markdown("""
     /* Input fields */
     .stTextInput>div>div>input,
     .stNumberInput>div>div>input,
-    .stSelectbox>div>div>select {
+    .stSelectbox>div>div>select,
+    .stTextArea>div>div>textarea {
         border-radius: 8px;
         border: 1px solid var(--border-color);
         padding: 0.625rem;
@@ -262,7 +268,8 @@ st.markdown("""
 
     .stTextInput>div>div>input:focus,
     .stNumberInput>div>div>input:focus,
-    .stSelectbox>div>div>select:focus {
+    .stSelectbox>div>div>select:focus,
+    .stTextArea>div>div>textarea:focus {
         border-color: var(--primary-color);
         box-shadow: 0 0 0 3px rgba(93, 95, 239, 0.1);
     }
@@ -287,11 +294,25 @@ st.markdown("""
         -webkit-text-fill-color: var(--text-primary) !important;
     }
 
+    /* Text area - force visible text */
+    .stTextArea textarea {
+        color: var(--text-primary) !important;
+        background-color: var(--bg-primary) !important;
+        -webkit-text-fill-color: var(--text-primary) !important;
+    }
+
     /* Input placeholder text */
     .stTextInput input::placeholder,
-    .stNumberInput input::placeholder {
+    .stNumberInput input::placeholder,
+    .stTextArea textarea::placeholder {
         color: var(--text-muted) !important;
         opacity: 0.7;
+    }
+
+    /* Text area label */
+    .stTextArea label {
+        color: var(--text-primary) !important;
+        font-weight: 500;
     }
 
     /* Selectbox dropdown - force light theme */
@@ -471,8 +492,21 @@ def init_session_state():
         st.session_state.selected_stock = None
     if "view_mode" not in st.session_state:
         st.session_state.view_mode = "market"  # market, stock_detail, portfolio
+
+    # Initialize all agents
     if "agent" not in st.session_state:
         st.session_state.agent = None
+    if "risk_profiler_agent" not in st.session_state:
+        st.session_state.risk_profiler_agent = None
+    if "scenario_simulator_agent" not in st.session_state:
+        st.session_state.scenario_simulator_agent = None
+    if "rebalancing_strategist_agent" not in st.session_state:
+        st.session_state.rebalancing_strategist_agent = None
+    if "comparative_analytics_agent" not in st.session_state:
+        st.session_state.comparative_analytics_agent = None
+    if "temporal_intelligence_agent" not in st.session_state:
+        st.session_state.temporal_intelligence_agent = None
+
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
 
@@ -1035,8 +1069,16 @@ def render_portfolio_view():
 
     st.divider()
 
-    # Tabs for holdings and Portfolio Insight Agent
-    tab1, tab2 = st.tabs(["Holdings", "Portfolio Insight Agent"])
+    # Tabs for holdings and all 6 AI agents
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+        "Holdings",
+        "Portfolio Insight Agent",
+        "Risk Profiler",
+        "Scenario Simulator",
+        "Rebalancing Strategist",
+        "Comparative Analytics",
+        "Temporal Intelligence"
+    ])
 
     with tab1:
         # Holdings table
@@ -1202,6 +1244,239 @@ Question: {user_question}"""
                         st.markdown(f"**Agent:** {msg.content}")
                     if idx < len(st.session_state.chat_history) - 1:
                         st.divider()
+
+    # TAB 3: Risk Profiler Agent
+    with tab3:
+        st.subheader("Risk Profiler Agent")
+        st.caption("Assess if your portfolio aligns with your risk tolerance")
+
+        # Initialize agent
+        if st.session_state.risk_profiler_agent is None:
+            try:
+                st.session_state.risk_profiler_agent = RiskProfilerAgent(service=service)
+            except Exception as e:
+                st.error(f"Could not initialize Risk Profiler Agent: {str(e)}")
+                st.info("Make sure you have ANTHROPIC_API_KEY or OPENAI_API_KEY set in your .env file")
+                return
+
+        if summary['positions']:
+            st.info("Enter your portfolio and risk profile to get an assessment")
+
+            # Portfolio input with weights
+            total_value = summary['total_market_value']
+            portfolio_str_with_weights = ", ".join([
+                f"{p.market_value/total_value*100:.1f}% {p.ticker}"
+                for p in summary['positions']
+            ])
+
+            user_portfolio = st.text_area(
+                "Your portfolio (format: X% TICKER, Y% TICKER...):",
+                value=portfolio_str_with_weights,
+                height=100,
+                key="risk_profiler_portfolio"
+            )
+
+            # Risk profile selection
+            risk_profile = st.selectbox(
+                "Select your risk tolerance:",
+                ["Conservative", "Moderate", "Aggressive"],
+                key="risk_profile_select"
+            )
+
+            if st.button("Assess Risk Fit", use_container_width=True, type="primary"):
+                if user_portfolio:
+                    with st.spinner(f"Analyzing fit for {risk_profile} profile..."):
+                        try:
+                            # Direct query that encourages tool use
+                            query = f"Use the evaluate_risk_fit tool to assess: portfolio: {user_portfolio} | profile: {risk_profile.lower()}"
+                            response = st.session_state.risk_profiler_agent.analyze(query)
+                            st.markdown(response)
+                        except Exception as e:
+                            st.error(f"Error: {str(e)}")
+                else:
+                    st.warning("Please enter a portfolio")
+        else:
+            st.info("Start trading to build your portfolio first!")
+
+    # TAB 4: Scenario Simulator Agent
+    with tab4:
+        st.subheader("Scenario Simulator Agent")
+        st.caption("Test your portfolio under hypothetical market conditions")
+
+        # Initialize agent
+        if st.session_state.scenario_simulator_agent is None:
+            try:
+                st.session_state.scenario_simulator_agent = ScenarioSimulatorAgent(service=service)
+            except Exception as e:
+                st.error(f"Could not initialize Scenario Simulator Agent: {str(e)}")
+                st.info("Make sure you have ANTHROPIC_API_KEY or OPENAI_API_KEY set in your .env file")
+                return
+
+        if summary['positions']:
+            portfolio_str = ", ".join([f"{p.ticker}" for p in summary['positions']])
+
+            st.markdown("**Scenario Type:**")
+            scenario_type = st.radio(
+                "Choose a scenario:",
+                ["Market Crash", "Historical Crisis", "Sector Decline"],
+                key="scenario_type"
+            )
+
+            if scenario_type == "Market Crash":
+                crash_pct = st.slider("Market decline percentage:", 5, 50, 20, key="crash_pct")
+                query_text = f"Simulate a {crash_pct}% market crash on portfolio: {portfolio_str}"
+            elif scenario_type == "Historical Crisis":
+                crisis = st.selectbox(
+                    "Select crisis:",
+                    ["2008 Financial Crisis", "2020 COVID Crash", "2000 Dot-com Bubble"],
+                    key="crisis_select"
+                )
+                query_text = f"How would my portfolio '{portfolio_str}' perform during the {crisis}?"
+            else:  # Sector Decline
+                sector = st.selectbox(
+                    "Select sector:",
+                    ["Technology", "Financials", "Healthcare", "Energy"],
+                    key="sector_select"
+                )
+                decline_pct = st.slider("Sector decline percentage:", 5, 50, 15, key="sector_decline")
+                query_text = f"Simulate a {decline_pct}% decline in {sector} sector for portfolio: {portfolio_str}"
+
+            if st.button("Run Simulation", use_container_width=True, type="primary"):
+                with st.spinner("Running scenario simulation..."):
+                    try:
+                        response = st.session_state.scenario_simulator_agent.analyze(query_text)
+                        st.markdown(response)
+                    except Exception as e:
+                        st.error(f"Error: {str(e)}")
+        else:
+            st.info("Start trading to build your portfolio first!")
+
+    # TAB 5: Rebalancing Strategist Agent
+    with tab5:
+        st.subheader("Rebalancing Strategist Agent")
+        st.caption("Get specific rebalancing recommendations to optimize your portfolio")
+
+        # Initialize agent
+        if st.session_state.rebalancing_strategist_agent is None:
+            try:
+                st.session_state.rebalancing_strategist_agent = RebalancingStrategistAgent(service=service)
+            except Exception as e:
+                st.error(f"Could not initialize Rebalancing Strategist Agent: {str(e)}")
+                st.info("Make sure you have ANTHROPIC_API_KEY or OPENAI_API_KEY set in your .env file")
+                return
+
+        if summary['positions']:
+            # Portfolio with weights
+            total_value = summary['total_market_value']
+            portfolio_str = ", ".join([
+                f"{p.market_value/total_value*100:.1f}% {p.ticker}"
+                for p in summary['positions']
+            ])
+
+            optimization_goal = st.selectbox(
+                "Optimization Goal:",
+                ["Maximize Sharpe Ratio", "Minimize Risk", "Risk Parity"],
+                key="optimization_goal"
+            )
+
+            if st.button("Generate Rebalancing Plan", use_container_width=True, type="primary"):
+                with st.spinner("Optimizing portfolio allocation..."):
+                    try:
+                        if "Sharpe" in optimization_goal:
+                            query = f"Optimize portfolio: {portfolio_str} to maximize Sharpe ratio"
+                        elif "Minimize" in optimization_goal:
+                            query = f"Rebalance portfolio: {portfolio_str} to minimize risk"
+                        else:
+                            query = f"Suggest risk-parity rebalancing for: {portfolio_str}"
+
+                        response = st.session_state.rebalancing_strategist_agent.analyze(query)
+                        st.markdown(response)
+                    except Exception as e:
+                        st.error(f"Error: {str(e)}")
+        else:
+            st.info("Start trading to build your portfolio first!")
+
+    # TAB 6: Comparative Analytics Agent
+    with tab6:
+        st.subheader("Comparative Analytics Agent")
+        st.caption("Compare your portfolio against benchmarks and other portfolios")
+
+        # Initialize agent
+        if st.session_state.comparative_analytics_agent is None:
+            try:
+                st.session_state.comparative_analytics_agent = ComparativeAnalyticsAgent(service=service)
+            except Exception as e:
+                st.error(f"Could not initialize Comparative Analytics Agent: {str(e)}")
+                st.info("Make sure you have ANTHROPIC_API_KEY or OPENAI_API_KEY set in your .env file")
+                return
+
+        if summary['positions']:
+            portfolio_str = ", ".join([f"{p.ticker}" for p in summary['positions']])
+
+            comparison_type = st.radio(
+                "Comparison Type:",
+                ["Benchmark Comparison", "Portfolio vs Portfolio"],
+                key="comparison_type"
+            )
+
+            if comparison_type == "Benchmark Comparison":
+                benchmark = st.selectbox(
+                    "Select Benchmark:",
+                    ["S&P 500", "NASDAQ-100", "60/40 Portfolio", "Aggressive Growth"],
+                    key="benchmark_select"
+                )
+                query = f"Compare my portfolio '{portfolio_str}' against {benchmark}"
+            else:
+                other_portfolio = st.text_input(
+                    "Enter other portfolio (comma-separated tickers):",
+                    placeholder="e.g., AAPL, GOOGL, MSFT",
+                    key="other_portfolio"
+                )
+                query = f"Compare portfolio '{portfolio_str}' vs '{other_portfolio}'"
+
+            if st.button("Run Comparison", use_container_width=True, type="primary"):
+                with st.spinner("Analyzing comparison..."):
+                    try:
+                        response = st.session_state.comparative_analytics_agent.analyze(query)
+                        st.markdown(response)
+                    except Exception as e:
+                        st.error(f"Error: {str(e)}")
+        else:
+            st.info("Start trading to build your portfolio first!")
+
+    # TAB 7: Temporal Intelligence Agent
+    with tab7:
+        st.subheader("Temporal Intelligence Agent")
+        st.caption("Analyze risk across different time horizons")
+
+        # Initialize agent
+        if st.session_state.temporal_intelligence_agent is None:
+            try:
+                st.session_state.temporal_intelligence_agent = TemporalIntelligenceAgent(service=service)
+            except Exception as e:
+                st.error(f"Could not initialize Temporal Intelligence Agent: {str(e)}")
+                st.info("Make sure you have ANTHROPIC_API_KEY or OPENAI_API_KEY set in your .env file")
+                return
+
+        if summary['positions']:
+            portfolio_str = ", ".join([f"{p.ticker}" for p in summary['positions']])
+
+            time_horizon = st.selectbox(
+                "Investment Time Horizon:",
+                ["Short-term (< 1 year)", "Medium-term (1-5 years)", "Long-term (5+ years)"],
+                key="time_horizon"
+            )
+
+            if st.button("Analyze Time Horizon Suitability", use_container_width=True, type="primary"):
+                with st.spinner("Analyzing temporal risk profile..."):
+                    try:
+                        query = f"Is my portfolio '{portfolio_str}' suitable for {time_horizon} investment?"
+                        response = st.session_state.temporal_intelligence_agent.analyze(query)
+                        st.markdown(response)
+                    except Exception as e:
+                        st.error(f"Error: {str(e)}")
+        else:
+            st.info("Start trading to build your portfolio first!")
 
 
 def main():
