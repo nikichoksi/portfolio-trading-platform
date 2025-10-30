@@ -275,6 +275,53 @@ Object does not exist, or operation cannot be performed
 
 **Solution**: Run `warehouse.setup_schema()` to create database/schema/tables
 
+### MFA Authentication Required
+```
+snowflake.connector.errors.DatabaseError: 250001: MFA authentication is required, but none of your current MFA methods are supported for programmatic authentication
+```
+
+**Problem**: Your Snowflake account has MFA enabled, which blocks password-only authentication from Python scripts.
+
+**Solutions**:
+
+1. **Use Key Pair Authentication** (Recommended for production):
+   ```bash
+   # Generate private key
+   openssl genrsa 2048 | openssl pkcs8 -topk8 -inform PEM -out rsa_key.p8 -nocrypt
+
+   # Generate public key
+   openssl rsa -in rsa_key.p8 -pubout -out rsa_key.pub
+
+   # Copy public key content (remove header/footer)
+   cat rsa_key.pub
+   ```
+
+   Then in Snowflake:
+   ```sql
+   ALTER USER BOA SET RSA_PUBLIC_KEY='<paste_public_key_here>';
+   ```
+
+   Update `.env`:
+   ```bash
+   SNOWFLAKE_PRIVATE_KEY_PATH=/path/to/rsa_key.p8
+   ```
+
+2. **Disable MFA for this account** (Not recommended):
+   - Log into Snowflake web UI as ACCOUNTADMIN
+   - Run: `ALTER USER BOA SET DISABLE_MFA = TRUE;`
+
+3. **Create a service account without MFA** (Recommended for automation):
+   ```sql
+   CREATE USER portfolio_service PASSWORD='<strong_password>' DEFAULT_ROLE=ACCOUNTADMIN;
+   GRANT ROLE ACCOUNTADMIN TO USER portfolio_service;
+   ```
+
+   Update `.env` to use `portfolio_service` instead of `BOA`.
+
+4. **Use SSO/OAuth** (Advanced):
+   - Configure external OAuth provider
+   - Use `authenticator='oauth'` parameter in connector
+
 ## Security Notes
 
 - **Never commit `.env`** to git - it contains passwords
