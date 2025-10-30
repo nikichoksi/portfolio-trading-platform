@@ -55,21 +55,53 @@ class SnowflakeWarehouse:
             # Resolve all config values from environment variables
             account = resolve_env_var(self.sf_config['account'])
             user = resolve_env_var(self.sf_config['user'])
-            password = resolve_env_var(self.sf_config['password'])
             warehouse = resolve_env_var(self.sf_config['warehouse'])
             database = resolve_env_var(self.sf_config['database'])
             schema = resolve_env_var(self.sf_config['schema'])
             role = resolve_env_var(self.sf_config.get('role', 'ACCOUNTADMIN'))
 
-            self.connection = snowflake.connector.connect(
-                user=user,
-                password=password,
-                account=account,
-                warehouse=warehouse,
-                database=database,
-                schema=schema,
-                role=role
-            )
+            # Check for private key authentication (preferred over password)
+            private_key_path = os.getenv('SNOWFLAKE_PRIVATE_KEY_PATH')
+
+            if private_key_path and os.path.exists(private_key_path):
+                # Use key-pair authentication
+                from cryptography.hazmat.backends import default_backend
+                from cryptography.hazmat.primitives import serialization
+
+                with open(private_key_path, "rb") as key_file:
+                    private_key = serialization.load_pem_private_key(
+                        key_file.read(),
+                        password=None,
+                        backend=default_backend()
+                    )
+
+                pkb = private_key.private_bytes(
+                    encoding=serialization.Encoding.DER,
+                    format=serialization.PrivateFormat.PKCS8,
+                    encryption_algorithm=serialization.NoEncryption()
+                )
+
+                self.connection = snowflake.connector.connect(
+                    user=user,
+                    account=account,
+                    private_key=pkb,
+                    warehouse=warehouse,
+                    database=database,
+                    schema=schema,
+                    role=role
+                )
+            else:
+                # Fall back to password authentication
+                password = resolve_env_var(self.sf_config['password'])
+                self.connection = snowflake.connector.connect(
+                    user=user,
+                    password=password,
+                    account=account,
+                    warehouse=warehouse,
+                    database=database,
+                    schema=schema,
+                    role=role
+                )
 
         return self.connection
 
@@ -143,15 +175,25 @@ class SnowflakeWarehouse:
         conn = self._get_connection()
         cursor = conn.cursor()
 
+        # Helper function to resolve environment variables from config
+        def resolve_env_var(value):
+            if isinstance(value, str) and value.startswith('${') and value.endswith('}'):
+                env_var_name = value[2:-1]
+                return os.getenv(env_var_name, '')
+            return value
+
+        database = resolve_env_var(self.sf_config['database'])
+        schema = resolve_env_var(self.sf_config['schema'])
+
         try:
             # Create database
-            cursor.execute(f"CREATE DATABASE IF NOT EXISTS {self.sf_config['database']}")
+            cursor.execute(f"CREATE DATABASE IF NOT EXISTS {database}")
 
             # Create schema
-            cursor.execute(f"CREATE SCHEMA IF NOT EXISTS {self.sf_config['database']}.{self.sf_config['schema']}")
+            cursor.execute(f"CREATE SCHEMA IF NOT EXISTS {database}.{schema}")
 
             # Use the schema
-            cursor.execute(f"USE SCHEMA {self.sf_config['database']}.{self.sf_config['schema']}")
+            cursor.execute(f"USE SCHEMA {database}.{schema}")
 
             # Create stock_prices table
             cursor.execute("""
@@ -163,8 +205,7 @@ class SnowflakeWarehouse:
                     low_price DECIMAL(18, 4),
                     close_price DECIMAL(18, 4),
                     volume BIGINT,
-                    created_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
-                    PRIMARY KEY (ticker, price_date)
+                    created_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
                 )
             """)
 
@@ -178,8 +219,7 @@ class SnowflakeWarehouse:
                     total_unrealized_pnl DECIMAL(18, 2),
                     total_unrealized_pnl_pct DECIMAL(10, 4),
                     num_positions INTEGER,
-                    created_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
-                    PRIMARY KEY (snapshot_id)
+                    created_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
                 )
             """)
 
@@ -195,9 +235,7 @@ class SnowflakeWarehouse:
                     market_value DECIMAL(18, 2),
                     unrealized_pnl DECIMAL(18, 2),
                     unrealized_pnl_pct DECIMAL(10, 4),
-                    created_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
-                    PRIMARY KEY (position_id),
-                    FOREIGN KEY (snapshot_id) REFERENCES portfolio_snapshots(snapshot_id)
+                    created_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
                 )
             """)
 
@@ -211,20 +249,8 @@ class SnowflakeWarehouse:
                     analysis_type VARCHAR(50),
                     metrics VARIANT,
                     recommendations VARIANT,
-                    created_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
-                    PRIMARY KEY (analysis_id)
+                    created_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
                 )
-            """)
-
-            # Create indexes
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_stock_prices_date
-                ON stock_prices(price_date)
-            """)
-
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_date
-                ON portfolio_snapshots(snapshot_date)
             """)
 
             conn.commit()
