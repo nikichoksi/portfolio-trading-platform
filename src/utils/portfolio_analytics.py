@@ -36,6 +36,162 @@ class PortfolioAnalyzer:
         """
         self.risk_free_rate = risk_free_rate
 
+    def parse_portfolio(self, portfolio_str: str) -> Dict[str, float]:
+        """
+        Parse portfolio string into holdings dictionary.
+
+        Args:
+            portfolio_str: Portfolio description like "40% AAPL, 30% MSFT, 30% GOOGL"
+
+        Returns:
+            Dict mapping ticker to weight (as decimal, e.g., 0.4 for 40%)
+        """
+        try:
+            holdings = {}
+            # Split by comma
+            parts = portfolio_str.split(',')
+
+            for part in parts:
+                part = part.strip()
+                # Extract percentage and ticker
+                tokens = part.split()
+
+                if len(tokens) >= 2:
+                    # Try to find percentage
+                    pct_str = tokens[0].replace('%', '')
+                    ticker = tokens[1].upper()
+
+                    try:
+                        weight = float(pct_str) / 100.0
+                        holdings[ticker] = weight
+                    except ValueError:
+                        continue
+
+            return holdings if holdings else None
+
+        except Exception:
+            return None
+
+    def analyze_portfolio(self, holdings: Dict[str, float]) -> PortfolioMetrics:
+        """
+        Analyze a portfolio given holdings dictionary.
+
+        Args:
+            holdings: Dict mapping ticker to weight
+
+        Returns:
+            PortfolioMetrics object
+        """
+        try:
+            import yfinance as yf
+
+            # Download price data
+            tickers_list = list(holdings.keys())
+            data = yf.download(tickers_list, period="1y", progress=False)['Close']
+
+            if data.empty:
+                return self._empty_metrics()
+
+            # Handle single ticker case
+            if len(tickers_list) == 1:
+                data = data.to_frame()
+                data.columns = tickers_list
+
+            # Calculate returns
+            returns = data.pct_change().dropna()
+
+            if returns.empty or len(returns) < 2:
+                return self._empty_metrics()
+
+            # Calculate portfolio returns
+            weights_series = pd.Series(holdings)
+            portfolio_returns = (returns * weights_series).sum(axis=1)
+
+            # Calculate metrics
+            total_return = (1 + portfolio_returns).prod() - 1
+            annualized_return = (1 + total_return) ** (252 / len(portfolio_returns)) - 1
+            volatility = portfolio_returns.std() * np.sqrt(252)
+            sharpe_ratio = (annualized_return - self.risk_free_rate) / volatility if volatility > 0 else 0
+
+            # Calculate beta (vs SPY as market proxy)
+            try:
+                spy_data = yf.download('SPY', period="1y", progress=False)['Close']
+                spy_returns = spy_data.pct_change().dropna()
+
+                # Align dates
+                aligned = pd.DataFrame({'portfolio': portfolio_returns, 'spy': spy_returns}).dropna()
+
+                if len(aligned) > 2:
+                    covariance = aligned['portfolio'].cov(aligned['spy'])
+                    market_variance = aligned['spy'].var()
+                    beta = covariance / market_variance if market_variance > 0 else 1.0
+                else:
+                    beta = 1.0
+            except:
+                beta = 1.0
+
+            # Calculate max drawdown
+            cumulative = (1 + portfolio_returns).cumprod()
+            running_max = cumulative.expanding().max()
+            drawdown = (cumulative - running_max) / running_max
+            max_drawdown = drawdown.min()
+
+            # Calculate diversification score
+            num_holdings = len(holdings)
+            holdings_score = min(num_holdings * 5, 40)
+
+            max_weight = max(holdings.values())
+            concentration_score = 30 * (1 - min(max_weight / 0.3, 1))
+
+            # Sector diversity (simplified - assume 1 sector per 2 stocks)
+            sector_score = min((num_holdings / 2) * 6, 30)
+            diversification_score = holdings_score + concentration_score + sector_score
+
+            # Top holdings
+            top_holdings = sorted(
+                [(ticker, weight * 100) for ticker, weight in holdings.items()],
+                key=lambda x: x[1],
+                reverse=True
+            )[:5]
+
+            # Determine risk level
+            if volatility * 100 > 30:
+                risk_level = "Very High"
+            elif volatility * 100 > 20:
+                risk_level = "High"
+            elif volatility * 100 > 15:
+                risk_level = "Medium"
+            else:
+                risk_level = "Low"
+
+            # Get sector info (simplified - fetch from yfinance)
+            sector_concentration = {}
+            try:
+                for ticker in tickers_list:
+                    info = yf.Ticker(ticker).info
+                    sector = info.get('sector', 'Other')
+                    weight_pct = holdings[ticker] * 100
+                    sector_concentration[sector] = sector_concentration.get(sector, 0) + weight_pct
+            except:
+                pass
+
+            return PortfolioMetrics(
+                total_return=total_return * 100,
+                annualized_return=annualized_return * 100,
+                volatility=volatility * 100,
+                sharpe_ratio=sharpe_ratio,
+                beta=beta,
+                max_drawdown=max_drawdown * 100,
+                diversification_score=diversification_score,
+                sector_concentration=sector_concentration,
+                top_holdings=top_holdings,
+                risk_level=risk_level
+            )
+
+        except Exception as e:
+            print(f"Error analyzing portfolio: {str(e)}")
+            return self._empty_metrics()
+
     def calculate_portfolio_metrics(
         self,
         positions: List,
