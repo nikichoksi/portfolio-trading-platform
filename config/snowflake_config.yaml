@@ -1,0 +1,35 @@
+# Snowflake Configuration
+# Fill in your Snowflake account details
+
+snowflake:
+  # Account identifier - loaded from environment variable
+  account: "${SNOWFLAKE_ACCOUNT}"
+
+  # User credentials - loaded from environment variables for security
+  user: "${SNOWFLAKE_USER}"
+  password: "${SNOWFLAKE_PASSWORD}"
+
+  # Warehouse settings - loaded from environment variable
+  warehouse: "${SNOWFLAKE_WAREHOUSE}"
+
+  # Database and schema - loaded from environment variables
+  database: "${SNOWFLAKE_DATABASE}"
+  schema: "${SNOWFLAKE_SCHEMA}"
+
+  # Role - loaded from environment variable
+  role: "${SNOWFLAKE_ROLE}"
+
+  # Connection settings
+  timeout: 30
+  retry_count: 3
+
+# Table configuration
+tables:
+  stock_prices:
+    retention_days: 730  # Keep 2 years of daily price data
+
+  portfolio_snapshots:
+    retention_days: 365  # Keep 1 year of portfolio snapshots
+
+  agent_analysis:
+    retention_days: 90  # Keep 90 days of AI agent results
