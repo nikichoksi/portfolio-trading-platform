@@ -8,16 +8,12 @@ Schedule: Daily at 5:00 PM ET (after market close)
 from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.utils.dates import days_ago
 import sys
 from pathlib import Path
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root / 'src'))
-
-from services.portfolio_service import PortfolioService
-from data_warehouse.snowflake_connector import SnowflakeWarehouse
 
 
 def capture_portfolio_snapshot(**context):
@@ -27,6 +23,8 @@ def capture_portfolio_snapshot(**context):
     Returns:
         Portfolio summary dict
     """
+    from services.portfolio_service import PortfolioService
+
     # Get portfolio service
     service = PortfolioService()
 
@@ -61,6 +59,9 @@ def save_to_snowflake(**context):
     """
     Save portfolio snapshot to Snowflake.
     """
+    from data_warehouse.snowflake_connector import SnowflakeWarehouse
+    from dataclasses import dataclass
+
     # Get data from previous task
     summary = context['ti'].xcom_pull(key='summary', task_ids='capture_snapshot')
     positions_data = context['ti'].xcom_pull(key='positions', task_ids='capture_snapshot')
@@ -70,8 +71,6 @@ def save_to_snowflake(**context):
         return
 
     # Reconstruct Position objects (simple dict representation)
-    from dataclasses import dataclass
-
     @dataclass
     class Position:
         ticker: str
@@ -204,8 +203,8 @@ dag = DAG(
     'portfolio_snapshot',
     default_args=default_args,
     description='Daily portfolio snapshot and analytics',
-    schedule_interval='0 17 * * 1-5',  # 5 PM ET, Mon-Fri (after market close)
-    start_date=days_ago(1),
+    schedule='0 17 * * 1-5',  # 5 PM ET, Mon-Fri (after market close)
+    start_date=datetime.now() - timedelta(days=1),
     catchup=False,
     tags=['portfolio', 'snapshot', 'snowflake'],
 )

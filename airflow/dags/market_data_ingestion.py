@@ -8,18 +8,12 @@ Schedule: Hourly during market hours (9:30 AM - 4:00 PM ET, Mon-Fri)
 from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.utils.dates import days_ago
 import sys
 from pathlib import Path
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root / 'src'))
-
-import yfinance as yf
-import pandas as pd
-from data_warehouse.snowflake_connector import SnowflakeWarehouse
-from database.models import PortfolioDatabase
 
 
 def fetch_portfolio_tickers(**context):
@@ -29,6 +23,8 @@ def fetch_portfolio_tickers(**context):
     Returns:
         List of ticker symbols
     """
+    from database.models import PortfolioDatabase
+
     db = PortfolioDatabase()
     stocks = db.get_all_stocks()
     tickers = [stock.ticker for stock in stocks]
@@ -60,6 +56,8 @@ def fetch_stock_prices(**context):
     """
     Fetch stock prices from Yahoo Finance for all portfolio tickers.
     """
+    import yfinance as yf
+
     # Get tickers from previous task
     tickers = context['ti'].xcom_pull(key='tickers', task_ids='fetch_portfolio_tickers')
 
@@ -98,6 +96,8 @@ def load_to_snowflake(**context):
     """
     Load stock price data into Snowflake warehouse.
     """
+    from data_warehouse.snowflake_connector import SnowflakeWarehouse
+
     # Get price data from previous task
     price_data = context['ti'].xcom_pull(key='price_data', task_ids='fetch_stock_prices')
 
@@ -143,6 +143,8 @@ def validate_data_quality(**context):
     Validate data quality in Snowflake.
     Check for missing prices, stale data, etc.
     """
+    from data_warehouse.snowflake_connector import SnowflakeWarehouse
+
     warehouse = SnowflakeWarehouse()
 
     try:
@@ -206,8 +208,8 @@ dag = DAG(
     'market_data_ingestion',
     default_args=default_args,
     description='Fetch stock prices from Yahoo Finance and load into Snowflake',
-    schedule_interval='0 9-16 * * 1-5',  # Hourly from 9 AM to 4 PM ET, Mon-Fri
-    start_date=days_ago(1),
+    schedule='0 9-16 * * 1-5',  # Hourly from 9 AM to 4 PM ET, Mon-Fri
+    start_date=datetime.now() - timedelta(days=1),
     catchup=False,
     tags=['market-data', 'snowflake', 'yahoo-finance'],
 )
