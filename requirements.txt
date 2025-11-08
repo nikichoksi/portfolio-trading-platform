@@ -4,28 +4,28 @@ langchain-anthropic>=0.1.0
 langchain-openai>=0.0.5
 anthropic>=0.18.0
 openai>=1.12.0
-langchain-groq>=0.1.0
 
-# LangChain Core
-langchain-core>=0.2.0
-langgraph>=0.1.0
+# Data Science & Analytics
+numpy==1.26.2
+scipy==1.11.4
+pandas==2.1.4
 
-# Financial Data & Analysis
-yfinance>=0.2.36
-pandas>=2.0.0
-numpy>=1.24.0
-scipy>=1.11.0
+# Environment & Configuration
+python-dotenv==1.0.0
+pyyaml==6.0.1
 
-# UI
-streamlit>=1.31.0
-plotly>=5.18.0
+# Market Data
+yfinance==0.2.31
 
-# Utilities
-python-dotenv>=1.0.0
-pydantic>=2.0.0
-requests>=2.31.0
+# Snowflake Data Warehouse
+snowflake-connector-python==3.6.0
+snowflake-sqlalchemy==1.5.1
 
-# Development
-pytest>=8.0.0
-black>=24.0.0
-ruff>=0.2.0
+# Apache Airflow
+apache-airflow==2.8.0
+apache-airflow-providers-snowflake==5.1.1
+
+# Additional Airflow providers (optional)
+# apache-airflow-providers-slack==8.5.0  # For Slack notifications
+# apache-airflow-providers-email==1.1.0  # For email alerts
+
