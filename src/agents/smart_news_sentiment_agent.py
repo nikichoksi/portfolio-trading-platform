@@ -7,11 +7,28 @@ import os
 import logging
 import requests
 import re
+import json
 from typing import List, Dict, Optional, Any
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
+from urllib.parse import urljoin, urlparse
 import time
 from dotenv import load_dotenv
+
+# LLM imports for intelligent news source discovery
+try:
+    import openai
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+    logging.warning("OpenAI not available. Install with: pip install openai")
+
+try:
+    from anthropic import Anthropic
+    ANTHROPIC_AVAILABLE = True
+except ImportError:
+    ANTHROPIC_AVAILABLE = False
+    logging.warning("Anthropic not available. Install with: pip install anthropic")
 
 # Financial data imports
 try:
@@ -76,12 +93,43 @@ class NewsSentimentAgent:
         self.session = requests.Session()
         self.session.headers.update(self.headers)
         
+        # Initialize LLM clients for news source discovery
+        self.openai_client = None
+        self.anthropic_client = None
+        self._initialize_llm_clients()
+        
         # Initialize sentiment analyzer
         self.sentiment_analyzer = None
         self.use_huggingface = False
         self._initialize_sentiment_analyzer()
         
         self.logger.info("NewsSentimentAgent initialized successfully")
+    
+    def _initialize_llm_clients(self):
+        """Initialize LLM clients for intelligent news source discovery"""
+        # Try OpenAI first
+        if OPENAI_AVAILABLE:
+            api_key = os.getenv("OPENAI_API_KEY")
+            if api_key:
+                try:
+                    self.openai_client = openai.OpenAI(api_key=api_key)
+                    self.logger.info("OpenAI client initialized for news source discovery")
+                    return
+                except Exception as e:
+                    self.logger.warning(f"Failed to initialize OpenAI client: {str(e)}")
+        
+        # Try Anthropic as fallback
+        if ANTHROPIC_AVAILABLE:
+            api_key = os.getenv("ANTHROPIC_API_KEY")
+            if api_key:
+                try:
+                    self.anthropic_client = Anthropic(api_key=api_key)
+                    self.logger.info("Anthropic client initialized for news source discovery")
+                    return
+                except Exception as e:
+                    self.logger.warning(f"Failed to initialize Anthropic client: {str(e)}")
+        
+        self.logger.info("No LLM client available. Will use default news sources only.")
     
     def _initialize_sentiment_analyzer(self):
         """
@@ -144,17 +192,130 @@ class NewsSentimentAgent:
         articles = []
         
         try:
-            # Try Yahoo Finance first
-            yahoo_articles = self._fetch_yahoo_finance_news(ticker, max_articles)
-            articles.extend(yahoo_articles)
+            # Step 1: Use LLM to find company-specific news sources
+            llm_news_sources = self._find_company_news_sources(ticker)
             
-            # If we don't have enough articles, try Finviz
+            # Step 2: Try LLM-discovered news sources first (if available)
+            if llm_news_sources:
+                self.logger.info(f"Using {len(llm_news_sources)} LLM-discovered news sources for {ticker}")
+                for source_url in llm_news_sources:
+                    try:
+                        # Check if it's a Yahoo Finance or Finviz URL (use existing methods)
+                        if 'finance.yahoo.com' in source_url and f'/{ticker}/' in source_url:
+                            yahoo_articles = self._fetch_yahoo_finance_news(ticker, max_articles)
+                            articles.extend(yahoo_articles)
+                        elif 'finviz.com' in source_url:
+                            finviz_articles = self._fetch_finviz_news(ticker, max_articles - len(articles))
+                            articles.extend(finviz_articles)
+                        else:
+                            # Try to scrape the URL directly
+                            custom_articles = self._fetch_custom_news_source(source_url, ticker, max_articles - len(articles))
+                            articles.extend(custom_articles)
+                    except Exception as e:
+                        self.logger.warning(f"Error fetching from LLM-discovered source {source_url}: {str(e)}")
+                        continue
+                    
+                    # If we have enough articles, break
+                    if len(articles) >= max_articles:
+                        break
+            
+            # Step 3: Fallback to default sources if LLM didn't find enough or wasn't available
             if len(articles) < max_articles:
-                finviz_articles = self._fetch_finviz_news(ticker, max_articles - len(articles))
-                articles.extend(finviz_articles)
+                self.logger.info(f"Using default news sources for {ticker} (found {len(articles)} articles so far)")
+                # Try Yahoo Finance first
+                yahoo_articles = self._fetch_yahoo_finance_news(ticker, max_articles)
+                articles.extend(yahoo_articles)
+                
+                # If we don't have enough articles, try Finviz
+                if len(articles) < max_articles:
+                    finviz_articles = self._fetch_finviz_news(ticker, max_articles - len(articles))
+                    articles.extend(finviz_articles)
             
             # Remove duplicates based on title similarity
             articles = self._remove_duplicates(articles)
+            
+            # Filter to prioritize ticker-specific articles
+            # Check if articles mention the ticker symbol or company name
+            ticker_upper = ticker.upper()
+            
+            # Common company name variations (basic mapping - can be expanded)
+            company_keywords = {
+                'AAPL': ['apple', 'iphone', 'ipad', 'macbook', 'tim cook'],
+                'MSFT': ['microsoft', 'azure', 'office', 'windows', 'satya nadella'],
+                'GOOGL': ['google', 'alphabet', 'android', 'youtube', 'sundar pichai'],
+                'GOOG': ['google', 'alphabet', 'android', 'youtube'],
+                'AMZN': ['amazon', 'aws', 'jeff bezos', 'alexa', 'prime'],
+                'META': ['meta', 'facebook', 'instagram', 'whatsapp', 'mark zuckerberg'],
+                'TSLA': ['tesla', 'elon musk', 'model s', 'model 3', 'cybertruck'],
+                'NVDA': ['nvidia', 'gpu', 'jensen huang', 'ai chip'],
+            }
+            
+            # Get relevant keywords for this ticker
+            relevant_keywords = [ticker_upper, ticker_upper.lower()]
+            if ticker_upper in company_keywords:
+                relevant_keywords.extend(company_keywords[ticker_upper])
+            
+            # Score articles based on relevance
+            scored_articles = []
+            for article in articles:
+                title = article.get('title', '').upper()
+                summary = article.get('summary', '').upper()
+                text = f"{title} {summary}"
+                
+                # Calculate relevance score
+                score = 0
+                ticker_mentioned = False
+                
+                # Higher score if ticker is mentioned
+                if ticker_upper in text:
+                    score += 10
+                    ticker_mentioned = True
+                
+                # Check for company-related keywords
+                for keyword in relevant_keywords:
+                    if keyword.upper() in text:
+                        score += 5
+                        break
+                
+                # Lower score for general market news keywords
+                general_market_keywords = [
+                    'DOW', 'S&P', 'NASDAQ', 'MARKET TODAY', 'STOCK MARKET',
+                    'WHITE HOUSE', 'TRUMP', 'BIDEN', 'POLITICS', 'ELECTION'
+                ]
+                for keyword in general_market_keywords:
+                    if keyword in text and not ticker_mentioned:
+                        score -= 3  # Penalize general market news if ticker not mentioned
+                
+                article['_relevance_score'] = score
+                article['_ticker_mentioned'] = ticker_mentioned
+                scored_articles.append(article)
+            
+            # Sort by relevance score (highest first)
+            scored_articles.sort(key=lambda x: x.get('_relevance_score', 0), reverse=True)
+            
+            # Prioritize ticker-specific articles
+            ticker_mentioned_articles = [a for a in scored_articles if a.get('_ticker_mentioned', False)]
+            other_articles = [a for a in scored_articles if not a.get('_ticker_mentioned', False)]
+            
+            # If we have enough ticker-specific articles, use only those
+            if len(ticker_mentioned_articles) >= max_articles:
+                articles = ticker_mentioned_articles[:max_articles]
+                self.logger.info(f"Found {len(articles)} ticker-specific articles for {ticker}")
+            elif len(ticker_mentioned_articles) > 0:
+                # Use ticker-specific first, then top-scored related news
+                # But prefer ticker-specific heavily
+                articles = ticker_mentioned_articles + other_articles[:max_articles - len(ticker_mentioned_articles)]
+                self.logger.info(f"Found {len(ticker_mentioned_articles)} ticker-specific and {len(articles) - len(ticker_mentioned_articles)} related articles for {ticker}")
+            else:
+                # No ticker-specific articles found - use top-scored articles
+                articles = scored_articles[:max_articles]
+                self.logger.warning(f"No ticker-specific articles found for {ticker}. Using top {len(articles)} articles.")
+            
+            # Remove internal scoring fields
+            articles = [
+                {k: v for k, v in article.items() if not k.startswith('_')}
+                for article in articles
+            ]
             
             # Limit to max_articles
             articles = articles[:max_articles]
@@ -205,7 +366,7 @@ class NewsSentimentAgent:
                     news_items = news_section.find_all('a', href=True)
             
             # Parse articles
-            for item in news_items[:max_articles]:
+            for item in news_items[:max_articles * 2]:  # Get more to filter
                 try:
                     article = {}
                     
@@ -214,6 +375,22 @@ class NewsSentimentAgent:
                     if title_elem:
                         title = title_elem.get_text(strip=True)
                         if title:
+                            # Filter out advertisement/promoted content
+                            title_lower = title.lower()
+                            
+                            # Skip if it's clearly an ad or unrelated content
+                            skip_keywords = [
+                                'advertisement', 'ad', 'sponsored', 'promoted',
+                                'subscribe', 'sign up', 'click here', 'learn more'
+                            ]
+                            
+                            if any(keyword in title_lower for keyword in skip_keywords):
+                                continue
+                            
+                            # Skip if title is too short or looks like navigation
+                            if len(title) < 10 or title.lower() in ['more', 'news', 'read', 'view']:
+                                continue
+                            
                             article['title'] = title
                             
                             # Find link
@@ -222,6 +399,12 @@ class NewsSentimentAgent:
                                 link = link_elem['href']
                                 if link.startswith('/'):
                                     link = f"https://finance.yahoo.com{link}"
+                                
+                                # Skip if link looks like an ad or navigation
+                                link_lower = link.lower()
+                                if any(skip in link_lower for skip in ['/ad/', '/advertising/', '/promo/', '/subscribe']):
+                                    continue
+                                
                                 article['link'] = link
                             else:
                                 article['link'] = url
@@ -237,17 +420,32 @@ class NewsSentimentAgent:
                             else:
                                 article['summary'] = title
                             
+                            # Check if article is relevant to the ticker
+                            # Priority: articles that mention the ticker in title or summary
+                            title_text = f"{article['title']} {article.get('summary', '')}".upper()
+                            ticker_mentioned = ticker in title_text
+                            
                             if article.get('title'):
-                                # Return only required fields: title, summary, link
-                                articles.append({
+                                article_data = {
                                     'title': article['title'],
                                     'summary': article.get('summary', article['title']),
-                                    'link': article.get('link', url)
-                                })
+                                    'link': article.get('link', url),
+                                    '_ticker_mentioned': ticker_mentioned  # Internal flag for sorting
+                                }
+                                articles.append(article_data)
                 
                 except Exception as e:
                     self.logger.debug(f"Error parsing article: {str(e)}")
                     continue
+            
+            # Sort articles: prioritize those mentioning the ticker
+            articles.sort(key=lambda x: (not x.get('_ticker_mentioned', False), x['title']))
+            
+            # Remove the internal flag and limit to max_articles
+            articles = [
+                {k: v for k, v in article.items() if k != '_ticker_mentioned'}
+                for article in articles[:max_articles]
+            ]
             
             # If no articles found with standard methods, try alternative approach
             if not articles:
@@ -360,6 +558,253 @@ class NewsSentimentAgent:
                 unique_articles.append(article)
         
         return unique_articles
+    
+    def _find_company_news_sources(self, ticker: str, company_name: Optional[str] = None) -> List[str]:
+        """
+        Use LLM to intelligently find company-specific news pages and sources.
+        
+        This method uses an LLM to discover the best news sources for a company,
+        avoiding hardcoding and working for any ticker.
+        
+        Args:
+            ticker: Stock ticker symbol (e.g., "GOOGL")
+            company_name: Optional company name (e.g., "Google")
+        
+        Returns:
+            List of news source URLs prioritized for the company
+        """
+        if not self.openai_client and not self.anthropic_client:
+            self.logger.debug("No LLM client available. Using default news sources.")
+            return []
+        
+        try:
+            # Get company information using yfinance if available
+            company_info = None
+            if YFINANCE_AVAILABLE:
+                try:
+                    stock = yf.Ticker(ticker)
+                    info = stock.info
+                    company_name = info.get('longName') or info.get('shortName') or company_name
+                    company_info = info.get('longBusinessSummary', '')
+                except Exception as e:
+                    self.logger.debug(f"Could not fetch company info from yfinance: {str(e)}")
+            
+            # Determine company name if not provided
+            if not company_name:
+                # Common ticker to company name mapping (fallback)
+                ticker_to_company = {
+                    'AAPL': 'Apple Inc',
+                    'MSFT': 'Microsoft Corporation',
+                    'GOOGL': 'Google (Alphabet Inc)',
+                    'GOOG': 'Google (Alphabet Inc)',
+                    'AMZN': 'Amazon.com Inc',
+                    'META': 'Meta Platforms Inc (Facebook)',
+                    'NVDA': 'Nvidia Corporation',
+                    'TSLA': 'Tesla Inc',
+                }
+                company_name = ticker_to_company.get(ticker.upper(), f"Company with ticker {ticker}")
+            
+            # Create prompt for LLM to find company-specific news sources
+            company_search_term = company_name.replace(' ', '+')
+            prompt = f"""Find the best news sources and URLs specifically for {company_name} (stock ticker: {ticker}).
+
+Requirements:
+1. Provide company-specific news page URLs (e.g., Yahoo Finance ticker page, Finviz quote page)
+2. Focus on financial news sites with dedicated sections for {ticker}
+3. Include company press release pages if available
+4. Avoid general market news pages
+
+Please return a JSON array of URLs. Examples:
+- Yahoo Finance: https://finance.yahoo.com/quote/{ticker}/news
+- Finviz: https://finviz.com/quote.ashx?t={ticker}
+- Google News search: https://news.google.com/search?q={company_search_term}+stock
+
+Return ONLY a valid JSON array of strings, no other text. Maximum 5 URLs."""
+
+            # Call LLM
+            if self.openai_client:
+                try:
+                    response = self.openai_client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[
+                            {"role": "system", "content": "You are a helpful assistant that finds company-specific financial news sources. Always return a valid JSON array of URLs."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        temperature=0.2,
+                        max_tokens=300
+                    )
+                    result = response.choices[0].message.content.strip()
+                except Exception as e:
+                    self.logger.warning(f"Error calling OpenAI: {str(e)}")
+                    return []
+            elif self.anthropic_client:
+                try:
+                    response = self.anthropic_client.messages.create(
+                        model="claude-3-haiku-20240307",
+                        max_tokens=300,
+                        temperature=0.2,
+                        messages=[
+                            {"role": "user", "content": prompt}
+                        ]
+                    )
+                    result = response.content[0].text.strip()
+                except Exception as e:
+                    self.logger.warning(f"Error calling Anthropic: {str(e)}")
+                    return []
+            else:
+                return []
+            
+            # Parse JSON response
+            # Remove markdown code blocks if present
+            result = re.sub(r'```json\s*', '', result)
+            result = re.sub(r'```\s*', '', result)
+            result = result.strip()
+            
+            # Try to parse as JSON
+            try:
+                # Handle both array and object responses
+                parsed = json.loads(result)
+                
+                # If it's a dict, look for common keys
+                if isinstance(parsed, dict):
+                    # Common keys LLMs might use
+                    for key in ['urls', 'sources', 'news_sources', 'links', 'results']:
+                        if key in parsed and isinstance(parsed[key], list):
+                            news_sources = parsed[key]
+                            break
+                    else:
+                        # Try to find any list in the dict
+                        news_sources = [v for v in parsed.values() if isinstance(v, list)]
+                        if news_sources:
+                            news_sources = news_sources[0]
+                        else:
+                            news_sources = []
+                elif isinstance(parsed, list):
+                    news_sources = parsed
+                else:
+                    news_sources = []
+                
+                # Validate and filter URLs
+                valid_urls = []
+                for url in news_sources:
+                    if isinstance(url, str) and url.startswith(('http://', 'https://')):
+                        valid_urls.append(url)
+                    elif isinstance(url, dict):
+                        # If URL is in a dict, try common keys
+                        for key in ['url', 'link', 'source', 'href']:
+                            if key in url and isinstance(url[key], str) and url[key].startswith(('http://', 'https://')):
+                                valid_urls.append(url[key])
+                                break
+                
+                if valid_urls:
+                    self.logger.info(f"Found {len(valid_urls)} news sources for {ticker} using LLM")
+                    return valid_urls[:5]  # Limit to top 5 sources
+                    
+            except json.JSONDecodeError:
+                # If JSON parsing fails, try to extract URLs from text
+                urls = re.findall(r'https?://[^\s\)"<>]+', result)
+                valid_urls = [url for url in urls if any(domain in url for domain in ['yahoo.com', 'finviz.com', 'google.com', 'bloomberg.com', 'reuters.com', 'cnbc.com', 'wsj.com', 'marketwatch.com'])]
+                if valid_urls:
+                    self.logger.info(f"Extracted {len(valid_urls)} URLs for {ticker} using LLM")
+                    return valid_urls[:5]
+            
+        except Exception as e:
+            self.logger.warning(f"Error finding news sources with LLM for {ticker}: {str(e)}")
+            # Don't fail completely, just log warning and continue with default sources
+        
+        return []
+    
+    def _fetch_custom_news_source(self, url: str, ticker: str, max_articles: int) -> List[Dict[str, str]]:
+        """
+        Fetch news from a custom news source URL.
+        
+        Args:
+            url: URL to scrape
+            ticker: Stock ticker symbol (for filtering)
+            max_articles: Maximum number of articles to fetch
+        
+        Returns:
+            List of news article dictionaries
+        """
+        articles = []
+        
+        try:
+            self.logger.debug(f"Fetching from custom news source: {url}")
+            
+            response = self.session.get(url, timeout=10)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Try to find news articles - generic approach
+            # Look for common news article patterns
+            news_items = (
+                soup.find_all('article') or
+                soup.find_all('div', class_=re.compile(r'news|article|headline', re.I)) or
+                soup.find_all('h3') or
+                soup.find_all('h2') or
+                soup.find_all('a', href=re.compile(r'news|article', re.I))
+            )
+            
+            # Filter for articles that might be about the ticker
+            ticker_upper = ticker.upper()
+            for item in news_items[:max_articles * 2]:
+                try:
+                    # Find title
+                    title_elem = item.find('a') or item.find('h3') or item.find('h2') or item
+                    if title_elem:
+                        title = title_elem.get_text(strip=True)
+                        
+                        if not title or len(title) < 10:
+                            continue
+                        
+                        # Filter out ads and navigation
+                        title_lower = title.lower()
+                        skip_keywords = [
+                            'advertisement', 'ad', 'sponsored', 'promoted',
+                            'subscribe', 'sign up', 'click here', 'learn more'
+                        ]
+                        
+                        if any(keyword in title_lower for keyword in skip_keywords):
+                            continue
+                        
+                        # Find link
+                        link_elem = item.find('a', href=True) or (title_elem if title_elem.name == 'a' else None)
+                        link = None
+                        if link_elem and link_elem.get('href'):
+                            link = link_elem['href']
+                            if link.startswith('/'):
+                                # Make absolute URL
+                                link = urljoin(url, link)
+                        else:
+                            link = url
+                        
+                        # Find summary
+                        summary_elem = item.find('p') or item.find('span', class_=re.compile(r'summary|description|excerpt', re.I))
+                        summary = summary_elem.get_text(strip=True) if summary_elem else title
+                        
+                        # Only include if it mentions the ticker or seems relevant
+                        text = f"{title} {summary}".upper()
+                        if ticker_upper in text or len(title) > 30:
+                            articles.append({
+                                'title': title,
+                                'summary': summary[:200] if len(summary) > 200 else summary,
+                                'link': link
+                            })
+                            
+                            if len(articles) >= max_articles:
+                                break
+                
+                except Exception as e:
+                    self.logger.debug(f"Error parsing custom news item: {str(e)}")
+                    continue
+        
+        except requests.RequestException as e:
+            self.logger.warning(f"Network error fetching custom news source {url}: {str(e)}")
+        except Exception as e:
+            self.logger.warning(f"Error parsing custom news source {url}: {str(e)}")
+        
+        return articles
     
     def analyze_sentiment(self, news_data: List[Dict[str, str]]) -> Dict[str, Any]:
         """
@@ -1189,17 +1634,91 @@ class NewsSentimentAgent:
                 self.logger.warning(f"No articles found for {ticker}")
                 return result
             
-            # Extract latest headlines
-            result["latest_headlines"] = [
-                {
-                    "title": article.get("title", "N/A"),
-                    "link": article.get("link", "N/A")
-                }
-                for article in articles[:5]  # Top 5 headlines
-            ]
+            # Extract latest headlines - TICKER-CENTRIC ONLY
+            # Filter to show only articles that mention the ticker or company name
+            ticker_upper = ticker.upper()
+            ticker_headlines = []
+            
+            # Company keyword mapping for better filtering
+            company_keywords = {
+                'AAPL': ['APPLE', 'IPHONE', 'IPAD', 'MACBOOK', 'TIM COOK'],
+                'MSFT': ['MICROSOFT', 'AZURE', 'OFFICE', 'WINDOWS', 'SATYA NADELLA'],
+                'GOOGL': ['GOOGLE', 'ALPHABET', 'ANDROID', 'YOUTUBE', 'SUNDAR PICHAI'],
+                'GOOG': ['GOOGLE', 'ALPHABET', 'ANDROID', 'YOUTUBE'],
+                'AMZN': ['AMAZON', 'AWS', 'ALEXA', 'PRIME', 'JEFF BEZOS'],
+                'META': ['META', 'FACEBOOK', 'INSTAGRAM', 'WHATSAPP', 'MARK ZUCKERBERG'],
+                'TSLA': ['TESLA', 'ELON MUSK', 'MODEL S', 'MODEL 3', 'CYBERTRUCK'],
+                'NVDA': ['NVIDIA', 'GPU', 'AI CHIP', 'JENSEN HUANG'],
+            }
+            
+            # Get relevant keywords for this ticker
+            relevant_keywords = [ticker_upper]
+            if ticker_upper in company_keywords:
+                relevant_keywords.extend(company_keywords[ticker_upper])
+            
+            # Filter articles to only those mentioning the ticker or company
+            for article in articles:
+                title = article.get("title", "")
+                summary = article.get("summary", "")
+                text = f"{title} {summary}".upper()
+                
+                # Check if article mentions ticker or company keywords
+                is_ticker_related = False
+                
+                # Check for ticker symbol
+                if ticker_upper in text:
+                    is_ticker_related = True
+                # Check for company keywords
+                elif ticker_upper in company_keywords:
+                    if any(keyword in text for keyword in company_keywords[ticker_upper]):
+                        is_ticker_related = True
+                
+                # Only include ticker-related articles in headlines
+                if is_ticker_related:
+                    ticker_headlines.append({
+                        "title": title,
+                        "link": article.get("link", "N/A")
+                    })
+                    
+                    # Limit to top 5 ticker-specific headlines
+                    if len(ticker_headlines) >= 5:
+                        break
+            
+            # If we don't have enough ticker-specific headlines, use top-scored articles
+            # But log a warning that we're showing non-ticker-specific news
+            if len(ticker_headlines) < 5:
+                remaining = [a for a in articles if a.get("title") not in [h["title"] for h in ticker_headlines]]
+                if remaining:
+                    self.logger.warning(
+                        f"Only found {len(ticker_headlines)} ticker-specific headlines for {ticker}. "
+                        f"Adding top {min(5 - len(ticker_headlines), len(remaining))} articles."
+                    )
+                    for article in remaining[:5 - len(ticker_headlines)]:
+                        ticker_headlines.append({
+                            "title": article.get("title", "N/A"),
+                            "link": article.get("link", "N/A")
+                        })
+            
+            result["latest_headlines"] = ticker_headlines[:5]
+            
+            # Log what we're showing
+            if len(ticker_headlines) > 0:
+                ticker_specific_count = sum(
+                    1 for h in ticker_headlines 
+                    if ticker_upper in f"{h['title']}".upper() or 
+                    (ticker_upper in company_keywords and 
+                     any(kw in f"{h['title']}".upper() for kw in company_keywords[ticker_upper]))
+                )
+                self.logger.info(
+                    f"Showing {len(ticker_headlines)} headlines for {ticker}: "
+                    f"{ticker_specific_count} ticker-specific, {len(ticker_headlines) - ticker_specific_count} related"
+                )
             
             # Step 2: Analyze sentiment
-            self.logger.info(f"Step 2: Analyzing sentiment for {ticker}")
+            # NOTE: We analyze ALL fetched articles (including general market news) for sentiment
+            # This provides better context for sentiment analysis
+            # But "latest_headlines" shown to user are ticker-centric only
+            self.logger.info(f"Step 2: Analyzing sentiment for {ticker} using {len(articles)} articles")
             sentiment_result = self.analyze_sentiment(articles)
             
             avg_sentiment = sentiment_result.get("avg_sentiment", 0.0)
@@ -1276,8 +1795,8 @@ class NewsSentimentAgent:
                 result["risk_level"] = risk_profit_result.get("risk_level")
                 result["profit_potential"] = risk_profit_result.get("profit_potential")
             
-            # Generate insight
-            result["insight"] = self._generate_insight(result)
+            # Generate insight (pass news articles for context)
+            result["insight"] = self._generate_insight(result, news_articles=articles)
             
             self.logger.info(f"Pipeline complete for {ticker}: risk={result['risk_level']}, profit={result['profit_potential']}")
             
@@ -1320,12 +1839,14 @@ class NewsSentimentAgent:
         
         return result
     
-    def _generate_insight(self, result: Dict[str, Any]) -> str:
+    def _generate_insight(self, result: Dict[str, Any], news_articles: Optional[List[Dict[str, str]]] = None) -> str:
         """
-        Generate an insight string based on the analysis results.
+        Generate an insight string based on the analysis results using GPT API.
+        Falls back to template-based insights if GPT is not available.
         
         Args:
             result: Dictionary containing analysis results
+            news_articles: List of news articles (optional, for context)
         
         Returns:
             Insight string describing the findings
@@ -1337,7 +1858,197 @@ class NewsSentimentAgent:
         avg_growth_30d = result.get("avg_growth_30d")
         risk_level = result.get("risk_level", "Unknown")
         profit_potential = result.get("profit_potential", 0)
+        sentiment_breakdown = result.get("sentiment_breakdown", {})
+        event_breakdown = result.get("event_breakdown", {})
         
+        # Try to generate insight using GPT API
+        if self.openai_client:
+            try:
+                return self._generate_insight_with_gpt(
+                    ticker=ticker,
+                    avg_sentiment=avg_sentiment,
+                    event=event,
+                    avg_growth_7d=avg_growth_7d,
+                    avg_growth_30d=avg_growth_30d,
+                    risk_level=risk_level,
+                    profit_potential=profit_potential,
+                    sentiment_breakdown=sentiment_breakdown,
+                    event_breakdown=event_breakdown,
+                    news_articles=news_articles[:5] if news_articles else []
+                )
+            except Exception as e:
+                self.logger.warning(f"Failed to generate insight with GPT: {e}. Falling back to template-based insight.")
+        
+        # Fallback to template-based insight
+        return self._generate_insight_template(
+            ticker=ticker,
+            avg_sentiment=avg_sentiment,
+            event=event,
+            avg_growth_7d=avg_growth_7d,
+            avg_growth_30d=avg_growth_30d,
+            risk_level=risk_level,
+            profit_potential=profit_potential
+        )
+    
+    def _generate_insight_with_gpt(
+        self,
+        ticker: str,
+        avg_sentiment: float,
+        event: str,
+        avg_growth_7d: Optional[float],
+        avg_growth_30d: Optional[float],
+        risk_level: str,
+        profit_potential: int,
+        sentiment_breakdown: Dict[str, Any],
+        event_breakdown: Dict[str, Any],
+        news_articles: List[Dict[str, str]]
+    ) -> str:
+        """
+        Generate insight using OpenAI GPT API.
+        
+        Args:
+            ticker: Stock ticker symbol
+            avg_sentiment: Average sentiment score (-1 to +1)
+            event: Most common event type
+            avg_growth_7d: Average 7-day growth percentage
+            avg_growth_30d: Average 30-day growth percentage
+            risk_level: Risk level (Low, Medium, High, Very High)
+            profit_potential: Profit potential score (0-100)
+            sentiment_breakdown: Sentiment breakdown statistics
+            event_breakdown: Event type breakdown
+            news_articles: List of recent news articles
+        
+        Returns:
+            Generated insight string
+        """
+        # Prepare news headlines for context
+        news_context = ""
+        if news_articles:
+            headlines = [article.get("title", "") for article in news_articles[:5] if article.get("title")]
+            if headlines:
+                news_context = "\n".join([f"- {headline}" for headline in headlines])
+        
+        # Prepare sentiment breakdown
+        sentiment_info = ""
+        if sentiment_breakdown:
+            positive = sentiment_breakdown.get("positive", 0)
+            neutral = sentiment_breakdown.get("neutral", 0)
+            negative = sentiment_breakdown.get("negative", 0)
+            total = sentiment_breakdown.get("total", 0)
+            if total > 0:
+                sentiment_info = f"Sentiment breakdown: {positive} positive ({positive/total*100:.1f}%), {neutral} neutral ({neutral/total*100:.1f}%), {negative} negative ({negative/total*100:.1f}%) articles."
+        
+        # Prepare event breakdown
+        event_info = ""
+        if event_breakdown:
+            events = [f"{k.replace('_', ' ').title()}: {v}" for k, v in sorted(event_breakdown.items(), key=lambda x: x[1], reverse=True)]
+            if events:
+                event_info = f"Detected events: {', '.join(events)}."
+        
+        # Prepare historical growth info
+        growth_info = ""
+        if avg_growth_7d is not None:
+            growth_info += f"7-day average growth: {avg_growth_7d:.2f}%"
+            if avg_growth_30d is not None:
+                growth_info += f", 30-day average growth: {avg_growth_30d:.2f}%"
+        
+        # Build prompt for GPT
+        analysis_lines = [
+            f"Average Sentiment Score: {avg_sentiment:.2f} (range: -1 to +1, where >0.3 is positive, <-0.3 is negative)",
+        ]
+        
+        if sentiment_info:
+            analysis_lines.append(sentiment_info)
+        
+        analysis_lines.append(f"Most Common Event Type: {event.replace('_', ' ').title()}")
+        
+        if event_info:
+            analysis_lines.append(event_info)
+        
+        if growth_info:
+            analysis_lines.append(growth_info)
+        else:
+            analysis_lines.append("No historical growth data available")
+        
+        analysis_lines.extend([
+            f"Risk Level: {risk_level}",
+            f"Profit Potential: {profit_potential}% (0-100 scale)"
+        ])
+        
+        analysis_data = "\n".join([f"- {line}" for line in analysis_lines])
+        
+        prompt = f"""You are a financial analyst providing investment insights. Based on the following analysis for {ticker} stock, generate a concise, actionable insight (2-3 sentences maximum).
+
+Analysis Data:
+{analysis_data}
+
+Recent News Headlines:
+{news_context if news_context else "No recent headlines available"}
+
+Requirements:
+1. Write in a clear, professional tone
+2. Focus on actionable insights: what the news means and what investors should expect
+3. If historical data is available, explain what it means for future performance
+4. Mention the risk level and profit potential naturally
+5. Keep it concise (2-3 sentences maximum)
+6. Do NOT explain technical details or methods used
+7. Focus on "what" and "so what" for the investor
+
+Example format:
+"According to recent news, {ticker} is experiencing [event type]. Historical data shows that similar events have led to [growth pattern]. Based on current sentiment and historical performance, this represents a [risk level] investment opportunity with [profit_potential]% profit potential."
+
+Generate the insight now:"""
+
+        try:
+            response = self.openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a financial analyst providing concise, actionable investment insights. Focus on what matters to investors, not technical details."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                max_tokens=200,
+                temperature=0.7
+            )
+            
+            insight = response.choices[0].message.content.strip()
+            self.logger.info(f"Generated GPT insight for {ticker}")
+            return insight
+            
+        except Exception as e:
+            self.logger.error(f"Error generating insight with GPT: {e}")
+            raise
+    
+    def _generate_insight_template(
+        self,
+        ticker: str,
+        avg_sentiment: float,
+        event: str,
+        avg_growth_7d: Optional[float],
+        avg_growth_30d: Optional[float],
+        risk_level: str,
+        profit_potential: int
+    ) -> str:
+        """
+        Generate template-based insight (fallback when GPT is not available).
+        
+        Args:
+            ticker: Stock ticker symbol
+            avg_sentiment: Average sentiment score (-1 to +1)
+            event: Most common event type
+            avg_growth_7d: Average 7-day growth percentage
+            avg_growth_30d: Average 30-day growth percentage
+            risk_level: Risk level (Low, Medium, High, Very High)
+            profit_potential: Profit potential score (0-100)
+        
+        Returns:
+            Template-based insight string
+        """
         # Determine sentiment description
         if avg_sentiment > 0.3:
             sentiment_desc = "positive"

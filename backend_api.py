@@ -25,6 +25,7 @@ from agents.scenario_simulator_agent import ScenarioSimulatorAgent
 from agents.rebalancing_strategist_agent import RebalancingStrategistAgent
 from agents.comparative_analytics_agent import ComparativeAnalyticsAgent
 from agents.temporal_intelligence_agent import TemporalIntelligenceAgent
+from agents.smart_news_sentiment_agent import NewsSentimentAgent
 
 # Import services
 from services.portfolio_service import PortfolioService
@@ -104,6 +105,8 @@ def get_agent(agent_name: str):
                 _agents[agent_name] = ComparativeAnalyticsAgent()
             elif agent_name == "temporal" or agent_name == "temporal_intelligence":
                 _agents[agent_name] = TemporalIntelligenceAgent()
+            elif agent_name == "news_sentiment" or agent_name == "news-sentiment":
+                _agents[agent_name] = NewsSentimentAgent()
             else:
                 raise ValueError(f"Unknown agent: {agent_name}")
         except Exception as e:
@@ -130,7 +133,8 @@ async def root():
             "scenario_simulator",
             "rebalancing_strategist",
             "comparative_analytics",
-            "temporal_intelligence"
+            "temporal_intelligence",
+            "news_sentiment"
         ],
         "endpoints": {
             "docs": "/docs",
@@ -337,7 +341,9 @@ async def universal_agent_analyze(
         "comparative": "comparative_analytics",
         "comparative-analytics": "comparative_analytics",
         "temporal": "temporal_intelligence",
-        "temporal-intelligence": "temporal_intelligence"
+        "temporal-intelligence": "temporal_intelligence",
+        "news-sentiment": "news_sentiment",
+        "news_sentiment": "news_sentiment"
     }
     
     if agent_name not in valid_agents:
@@ -345,13 +351,48 @@ async def universal_agent_analyze(
     
     try:
         agent = get_agent(agent_name)
-        response = agent.analyze(request.query, request.chat_history)
+        # News Sentiment Agent uses run() method instead of analyze()
+        if agent_name in ["news-sentiment", "news_sentiment"]:
+            # Extract ticker from query (e.g., "AAPL" or "Analyze AAPL")
+            import re
+            ticker_match = re.search(r'\b([A-Z]{1,5})\b', request.query.upper())
+            ticker = ticker_match.group(1) if ticker_match else "AAPL"
+            result = agent.run(ticker=ticker, max_articles=10, save_to_json=False)
+            # Format result as JSON string for response
+            import json
+            response = json.dumps(result, indent=2, default=str)
+        else:
+            response = agent.analyze(request.query, request.chat_history)
         return AgentResponse(
             response=response,
             agent=valid_agents[agent_name]
         )
     except Exception as e:
         logger.error(f"Error in {agent_name} analysis: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============================================================================
+# NEWS SENTIMENT AGENT ENDPOINTS
+# ============================================================================
+
+class NewsSentimentRequest(BaseModel):
+    ticker: str = Field(..., description="Stock ticker symbol (e.g., 'AAPL')")
+    max_articles: Optional[int] = Field(default=10, description="Maximum number of articles to fetch")
+    save_to_json: Optional[bool] = Field(default=False, description="Whether to save results to JSON file")
+
+@app.post("/api/v1/agents/news-sentiment/analyze")
+async def news_sentiment_analyze(request: NewsSentimentRequest):
+    """Analyze news sentiment for a stock ticker using News Sentiment Agent"""
+    try:
+        agent = get_agent("news-sentiment")
+        result = agent.run(
+            ticker=request.ticker,
+            max_articles=request.max_articles,
+            save_to_json=request.save_to_json
+        )
+        return JSONResponse(content=result)
+    except Exception as e:
+        logger.error(f"Error in news sentiment analysis: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================================================

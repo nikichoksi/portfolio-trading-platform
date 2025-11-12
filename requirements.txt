@@ -26,6 +26,10 @@ nltk>=3.8.0
 # transformers>=4.30.0
 # torch>=2.0.0
 
+# LLM for intelligent news source discovery
+openai>=1.0.0
+anthropic>=0.18.0
+
 # Snowflake Data Warehouse
 snowflake-connector-python==3.6.0
 snowflake-sqlalchemy==1.5.1
