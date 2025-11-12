@@ -6,11 +6,21 @@ Fetches and analyzes news articles for stock tickers using web scraping.
 import os
 import logging
 import requests
+import re
 from typing import List, Dict, Optional, Any
 from bs4 import BeautifulSoup
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 from dotenv import load_dotenv
+
+# Financial data imports
+try:
+    import yfinance as yf
+    import pandas as pd
+    YFINANCE_AVAILABLE = True
+except ImportError:
+    YFINANCE_AVAILABLE = False
+    logging.warning("yfinance not available. Install with: pip install yfinance pandas")
 
 # Sentiment analysis imports
 try:
@@ -546,6 +556,841 @@ class NewsSentimentAgent:
             self.logger.error(f"Error in VADER sentiment analysis: {str(e)}")
             return {"sentiment": "neutral", "score": 0.5}
     
+    def detect_event_type(self, news_data: List[Dict[str, str]]) -> List[Dict[str, str]]:
+        """
+        Detect event types from news articles using keyword/phrase detection.
+        
+        Args:
+            news_data: List of news article dictionaries with 'title' and optionally 'summary'
+        
+        Returns:
+            List of dictionaries containing:
+            - title: Article title
+            - event: Detected event type
+            - confidence: Confidence score (0.0 to 1.0)
+            - keywords_matched: List of keywords that matched
+        """
+        if not news_data:
+            self.logger.warning("Empty news data provided for event detection")
+            return []
+        
+        # Event type keyword mappings
+        event_keywords = {
+            "product_launch": [
+                "launch", "launches", "launched", "releases", "released", "release",
+                "introduces", "introduced", "introduction", "unveils", "unveiled",
+                "unveiling", "debuts", "debut", "debuted", "announces", "announced",
+                "announcement", "rolls out", "rolled out", "rollout", "preview",
+                "previews", "previewed", "unveiling", "unveil", "coming soon",
+                "available now", "now available"
+            ],
+            "acquisition": [
+                "acquires", "acquired", "acquisition", "merger", "merged", "merges",
+                "merge", "takeover", "took over", "taking over", "purchased company",
+                "buyout", "bought out", "acquiring", "consolidation", "consolidated",
+                "consolidates", "bought company", "acquired company", "merger deal",
+                "takeover bid", "merges with", "acquires stake", "acquisition deal"
+            ],
+            "earnings_report": [
+                "earnings", "revenue", "revenues", "quarter", "quarters", "q1", "q2",
+                "q3", "q4", "fiscal", "financial results", "financial report",
+                "quarterly results", "annual results", "quarterly earnings",
+                "annual earnings", "profit", "profits", "profitability", "loss",
+                "losses", "beat earnings", "beats earnings", "missed earnings",
+                "miss earnings", "forecast", "forecasts", "guidance", "eps",
+                "earnings per share", "sales report", "outperformed", "underperformed"
+            ],
+            "partnership": [
+                "partnership", "partnerships", "partner", "partners", "partnered",
+                "partnering", "collaboration", "collaborates", "collaborated",
+                "collaborating", "collaborative", "alliance", "alliances",
+                "joins forces", "teaming up", "team up", "teamed up", "work together",
+                "working together", "joint venture", "joint ventures", "strategic",
+                "agreement", "agreements", "deal", "deals"
+            ],
+            "negative_event": [
+                "lawsuit", "lawsuits", "sued", "suing", "legal action", "legal actions",
+                "delay", "delays", "delayed", "postponed", "postponement",
+                "recall", "recalls", "recalled", "recalling", "recalled",
+                "investigation", "investigations", "investigating", "investigated",
+                "violation", "violations", "fined", "fine", "fines", "penalty",
+                "penalties", "breach", "breaches", "scandal", "scandals",
+                "crisis", "crises", "controversy", "controversies", "allegations",
+                "alleged", "charges", "charged", "probe", "probes", "probed",
+                "failure", "failures", "failed", "failing", "downgrade", "downgrades",
+                "downgraded", "cut", "cuts", "reduction", "reductions", "layoff",
+                "layoffs", "fired", "firing", "terminated", "termination"
+            ]
+        }
+        
+        self.logger.info(f"Detecting event types for {len(news_data)} articles")
+        
+        detected_events = []
+        event_counts = {}
+        
+        for article in news_data:
+            try:
+                # Get text to analyze (prefer summary, fall back to title)
+                title = article.get('title', '')
+                summary = article.get('summary', '')
+                text = f"{title} {summary}".lower()
+                
+                if not text.strip():
+                    self.logger.warning(f"Skipping article with no text: {article}")
+                    continue
+                
+                # Detect events in the text
+                detected_event_types = []
+                matched_keywords = []
+                
+                for event_type, keywords in event_keywords.items():
+                    matches = []
+                    for keyword in keywords:
+                        # Check if keyword appears in text (word boundary matching)
+                        keyword_lower = keyword.lower()
+                        # More precise matching: check if it's a whole word
+                        pattern = r'\b' + re.escape(keyword_lower) + r'\b'
+                        if re.search(pattern, text):
+                            matches.append(keyword)
+                    
+                    if matches:
+                        # Calculate confidence based on number of matches
+                        # Base confidence increases with more keyword matches
+                        base_confidence = min(0.5 + (len(matches) - 1) * 0.15, 0.9)
+                        confidence = base_confidence
+                        
+                        # Boost confidence for certain important keywords
+                        important_keywords = {
+                            "product_launch": ["launch", "releases", "unveils", "announces"],
+                            "acquisition": ["acquires", "merger", "buys", "takeover"],
+                            "earnings_report": ["earnings", "revenue", "quarter"],
+                            "partnership": ["partnership", "collaboration", "alliance"],
+                            "negative_event": ["lawsuit", "recall", "investigation", "violation"]
+                        }
+                        
+                        if any(kw in matches for kw in important_keywords.get(event_type, [])):
+                            confidence = min(confidence + 0.2, 1.0)
+                        
+                        detected_event_types.append({
+                            "event": event_type,
+                            "confidence": round(confidence, 3),
+                            "keywords_matched": matches
+                        })
+                        
+                        matched_keywords.extend(matches)
+                
+                # Rank events by confidence and importance
+                if detected_event_types:
+                    # Sort by confidence (highest first)
+                    detected_event_types.sort(key=lambda x: x['confidence'], reverse=True)
+                    
+                    # Select the primary event (highest confidence)
+                    primary_event = detected_event_types[0]
+                    
+                    # If multiple events with similar confidence, prioritize by importance
+                    if len(detected_event_types) > 1:
+                        # Importance order: earnings_report > acquisition > negative_event > product_launch > partnership
+                        importance_order = {
+                            "earnings_report": 5,
+                            "acquisition": 4,
+                            "negative_event": 3,
+                            "product_launch": 2,
+                            "partnership": 1
+                        }
+                        
+                        # Check if there's a more important event with similar confidence
+                        for event in detected_event_types[1:]:
+                            if (event['confidence'] >= primary_event['confidence'] - 0.2 and
+                                importance_order.get(event['event'], 0) > importance_order.get(primary_event['event'], 0)):
+                                primary_event = event
+                    
+                    # Add to detected events
+                    detected_events.append({
+                        "title": title,
+                        "event": primary_event['event'],
+                        "confidence": primary_event['confidence'],
+                        "keywords_matched": list(set(primary_event['keywords_matched']))
+                    })
+                    
+                    # Update event counts
+                    event_type = primary_event['event']
+                    event_counts[event_type] = event_counts.get(event_type, 0) + 1
+                else:
+                    # No event detected
+                    detected_events.append({
+                        "title": title,
+                        "event": "general_news",
+                        "confidence": 0.0,
+                        "keywords_matched": []
+                    })
+                    event_counts["general_news"] = event_counts.get("general_news", 0) + 1
+                
+            except Exception as e:
+                self.logger.error(f"Error detecting event type for article: {str(e)}", exc_info=True)
+                continue
+        
+        # Log event detection summary
+        self.logger.info(f"Event detection complete. Events found: {event_counts}")
+        
+        return detected_events
+    
+    def analyze_historical_growth(self, ticker: str, event_type: str) -> Dict[str, Any]:
+        """
+        Analyze historical stock growth after similar events.
+        
+        Fetches historical stock data for the past 3 years and simulates finding
+        past occurrences of similar events, then calculates average price changes
+        after those events.
+        
+        Args:
+            ticker: Stock ticker symbol (e.g., "AAPL")
+            event_type: Type of event to analyze (e.g., "product_launch", "acquisition")
+        
+        Returns:
+            Dictionary containing:
+            - event: Event type
+            - avg_growth_7d: Average % change in 7 days after event
+            - avg_growth_30d: Average % change in 30 days after event
+            - num_events_found: Number of similar events found
+            - error: Error message if any
+        """
+        if not YFINANCE_AVAILABLE:
+            self.logger.error("yfinance is not available. Cannot analyze historical growth.")
+            return {
+                "event": event_type,
+                "avg_growth_7d": None,
+                "avg_growth_30d": None,
+                "num_events_found": 0,
+                "error": "yfinance library not available"
+            }
+        
+        ticker = ticker.upper().strip()
+        self.logger.info(f"Analyzing historical growth for {ticker} after {event_type} events")
+        
+        try:
+            # Fetch historical stock data for the past 3 years
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=3 * 365)
+            
+            self.logger.info(f"Fetching historical data from {start_date.date()} to {end_date.date()}")
+            
+            stock = yf.Ticker(ticker)
+            hist_data = stock.history(start=start_date, end=end_date)
+            
+            if hist_data.empty:
+                self.logger.warning(f"No historical data found for {ticker}")
+                return {
+                    "event": event_type,
+                    "avg_growth_7d": None,
+                    "avg_growth_30d": None,
+                    "num_events_found": 0,
+                    "error": f"No historical data found for {ticker}"
+                }
+            
+            # Ensure we have a 'Close' column
+            if 'Close' not in hist_data.columns:
+                self.logger.error(f"No 'Close' price data found for {ticker}")
+                return {
+                    "event": event_type,
+                    "avg_growth_7d": None,
+                    "avg_growth_30d": None,
+                    "num_events_found": 0,
+                    "error": "No close price data available"
+                }
+            
+            # Simulate finding past occurrences of similar events
+            # This is a placeholder - in a real implementation, you would:
+            # 1. Fetch historical news articles for the ticker
+            # 2. Use detect_event_type on those articles
+            # 3. Filter by the event_type
+            # 4. Get the dates of those events
+            
+            # For now, we'll use a heuristic approach:
+            # - Find dates with significant price movements (potential event dates)
+            # - Or use a placeholder dataset with simulated event dates
+            
+            event_dates = self._simulate_event_dates(hist_data, event_type)
+            
+            if not event_dates:
+                self.logger.warning(f"No simulated events found for {event_type} for {ticker}")
+                return {
+                    "event": event_type,
+                    "avg_growth_7d": None,
+                    "avg_growth_30d": None,
+                    "num_events_found": 0,
+                    "error": f"No events found for {event_type}"
+                }
+            
+            self.logger.info(f"Found {len(event_dates)} simulated events of type {event_type}")
+            
+            # Calculate price changes after each event
+            growth_7d_list = []
+            growth_30d_list = []
+            
+            for event_date in event_dates:
+                try:
+                    # Convert event_date to Timestamp if needed
+                    event_date_ts = pd.Timestamp(event_date)
+                    
+                    # Find the closest date in hist_data to the event_date
+                    # (since event_date might not be exactly in the index due to weekends/holidays)
+                    if event_date_ts not in hist_data.index:
+                        # Find the closest date in the index
+                        closest_index = hist_data.index.get_indexer([event_date_ts], method='nearest')[0]
+                        if closest_index == -1:
+                            self.logger.warning(f"Could not find closest date for {event_date}")
+                            continue
+                        event_date_ts = hist_data.index[closest_index]
+                    
+                    # Get the price on the event date
+                    event_price = hist_data.loc[event_date_ts, 'Close']
+                    
+                    # Calculate 7-day growth
+                    date_7d = event_date_ts + timedelta(days=7)
+                    # Find closest date to 7 days later
+                    future_dates_7d = hist_data.index[hist_data.index > event_date_ts]
+                    if len(future_dates_7d) > 0:
+                        # Find date closest to 7 days
+                        target_date_7d = event_date_ts + timedelta(days=7)
+                        closest_date_7d = min(future_dates_7d, key=lambda x: abs((x - target_date_7d).days))
+                        if abs((closest_date_7d - target_date_7d).days) <= 3:  # Within 3 days of 7
+                            price_7d = hist_data.loc[closest_date_7d, 'Close']
+                            growth_7d = ((price_7d - event_price) / event_price) * 100
+                            growth_7d_list.append(growth_7d)
+                    
+                    # Calculate 30-day growth
+                    date_30d = event_date_ts + timedelta(days=30)
+                    # Find closest date to 30 days later
+                    future_dates_30d = hist_data.index[hist_data.index > event_date_ts]
+                    if len(future_dates_30d) > 0:
+                        # Find date closest to 30 days
+                        target_date_30d = event_date_ts + timedelta(days=30)
+                        closest_date_30d = min(future_dates_30d, key=lambda x: abs((x - target_date_30d).days))
+                        if abs((closest_date_30d - target_date_30d).days) <= 5:  # Within 5 days of 30
+                            price_30d = hist_data.loc[closest_date_30d, 'Close']
+                            growth_30d = ((price_30d - event_price) / event_price) * 100
+                            growth_30d_list.append(growth_30d)
+                
+                except (KeyError, IndexError) as e:
+                    self.logger.warning(f"Error processing event date {event_date}: {str(e)}")
+                    continue
+                except Exception as e:
+                    self.logger.error(f"Unexpected error processing event date {event_date}: {str(e)}")
+                    continue
+            
+            # Calculate average growth
+            avg_growth_7d = None
+            avg_growth_30d = None
+            
+            if growth_7d_list:
+                avg_growth_7d = sum(growth_7d_list) / len(growth_7d_list)
+                avg_growth_7d = round(avg_growth_7d, 2)
+            
+            if growth_30d_list:
+                avg_growth_30d = sum(growth_30d_list) / len(growth_30d_list)
+                avg_growth_30d = round(avg_growth_30d, 2)
+            
+            result = {
+                "event": event_type,
+                "avg_growth_7d": avg_growth_7d,
+                "avg_growth_30d": avg_growth_30d,
+                "num_events_found": len(event_dates)
+            }
+            
+            self.logger.info(f"Historical growth analysis complete: {result}")
+            return result
+        
+        except Exception as e:
+            self.logger.error(f"Error analyzing historical growth for {ticker}: {str(e)}", exc_info=True)
+            return {
+                "event": event_type,
+                "avg_growth_7d": None,
+                "avg_growth_30d": None,
+                "num_events_found": 0,
+                "error": f"Error analyzing historical growth: {str(e)}"
+            }
+    
+    def _simulate_event_dates(self, hist_data: pd.DataFrame, event_type: str) -> List[datetime]:
+        """
+        Simulate finding past event dates based on historical data.
+        
+        This is a placeholder method. In a real implementation, you would:
+        1. Fetch historical news articles
+        2. Use detect_event_type on those articles
+        3. Return the dates of articles matching the event_type
+        
+        For now, we'll use a heuristic:
+        - Find dates with significant price movements (volatility spikes)
+        - Or use quarterly dates for earnings_report events
+        - Or use random dates as a fallback
+        
+        Args:
+            hist_data: Historical stock price data
+            event_type: Type of event to simulate
+        
+        Returns:
+            List of datetime objects representing event dates
+        """
+        event_dates = []
+        
+        try:
+            if hist_data.empty or 'Close' not in hist_data.columns:
+                return event_dates
+            
+            # Convert index to datetime if it's not already
+            if not isinstance(hist_data.index, pd.DatetimeIndex):
+                hist_data.index = pd.to_datetime(hist_data.index)
+            
+            # Strategy 1: For earnings_report, use quarterly dates
+            if event_type == "earnings_report":
+                # Find dates that are likely earnings dates (end of quarters)
+                # Typically: Jan 31, Apr 30, Jul 31, Oct 31 (or close to these)
+                quarterly_dates = []
+                for date in hist_data.index:
+                    month = date.month
+                    day = date.day
+                    # Check if it's near end of quarter (last 10 days of Jan, Apr, Jul, Oct)
+                    if month in [1, 4, 7, 10] and day >= 21:
+                        quarterly_dates.append(date)
+                
+                # Limit to max 12 events (3 years * 4 quarters)
+                if quarterly_dates:
+                    event_dates = sorted(quarterly_dates)[-12:]
+                else:
+                    # Fallback: use dates with significant price movements
+                    hist_data_copy = hist_data.copy()
+                    hist_data_copy['Returns'] = hist_data_copy['Close'].pct_change()
+                    hist_data_copy['AbsReturns'] = hist_data_copy['Returns'].abs()
+                    if len(hist_data_copy) > 10:
+                        threshold = hist_data_copy['AbsReturns'].quantile(0.90)
+                        volatile_dates = hist_data_copy[hist_data_copy['AbsReturns'] >= threshold].index
+                        event_dates = sorted(volatile_dates)[-12:] if len(volatile_dates) > 0 else []
+                    else:
+                        event_dates = []
+            
+            # Strategy 2: For other events, find dates with significant price movements
+            else:
+                # Calculate daily returns
+                hist_data_copy = hist_data.copy()
+                hist_data_copy['Returns'] = hist_data_copy['Close'].pct_change()
+                hist_data_copy['AbsReturns'] = hist_data_copy['Returns'].abs()
+                
+                # Find dates with high volatility (top 10% of absolute returns)
+                if len(hist_data_copy) > 10:  # Need at least 10 data points
+                    threshold = hist_data_copy['AbsReturns'].quantile(0.90)
+                    volatile_dates = hist_data_copy[hist_data_copy['AbsReturns'] >= threshold].index
+                    
+                    # Limit to reasonable number of events (max 10-15)
+                    if len(volatile_dates) > 0:
+                        event_dates = sorted(volatile_dates)[-12:]
+                    else:
+                        event_dates = []
+                else:
+                    event_dates = []
+            
+            # Convert to list of datetime objects (already Timestamps from pandas)
+            if event_dates:
+                event_dates = [pd.Timestamp(date).to_pydatetime() for date in event_dates]
+                
+                # Remove duplicates and sort
+                event_dates = sorted(list(set(event_dates)))
+                
+                # Ensure dates are within the historical data range and have enough future data
+                if hist_data.index.min() and hist_data.index.max():
+                    min_date = pd.Timestamp(hist_data.index.min())
+                    max_date = pd.Timestamp(hist_data.index.max())
+                    # Only keep dates that are at least 30 days before the end
+                    cutoff_date = max_date - timedelta(days=30)
+                    event_dates = [
+                        date for date in event_dates
+                        if min_date <= pd.Timestamp(date) <= cutoff_date
+                    ]
+            
+            self.logger.info(f"Simulated {len(event_dates)} event dates for {event_type}")
+            
+        except Exception as e:
+            self.logger.error(f"Error simulating event dates: {str(e)}", exc_info=True)
+            # Fallback: return empty list
+            return []
+        
+        return event_dates
+    
+    def simulate_risk_profit(self, avg_sentiment: float, avg_growth_7d: float) -> Dict[str, Any]:
+        """
+        Simulate risk and profit potential based on sentiment and historical growth.
+        
+        Combines sentiment analysis and historical growth data into a weighted score
+        to assess risk level and profit potential. Handles negative sentiment and
+        historical losses correctly.
+        
+        Args:
+            avg_sentiment: Average sentiment score (-1 to +1)
+                - Positive values indicate positive sentiment
+                - Negative values indicate negative sentiment
+            avg_growth_7d: Average 7-day growth percentage (can be positive or negative)
+                - Positive values indicate historical gains
+                - Negative values indicate historical losses
+        
+        Returns:
+            Dictionary containing:
+            - risk_level: Risk level category ("Low", "Medium", "High", "Very High")
+            - profit_potential: Profit potential score (0-100)
+            - score: Combined weighted score (-1 to +1)
+            - sentiment_contribution: Contribution from sentiment (weighted)
+            - growth_contribution: Contribution from historical growth (weighted)
+        """
+        try:
+            # Validate inputs
+            if avg_sentiment is None:
+                avg_sentiment = 0.0
+            if avg_growth_7d is None:
+                avg_growth_7d = 0.0
+            
+            # Ensure sentiment is in range [-1, +1]
+            avg_sentiment = max(-1.0, min(1.0, float(avg_sentiment)))
+            
+            # Normalize avg_growth_7d to range [-1, +1]
+            # Divide by 10 to normalize (assuming typical range is -10% to +10%)
+            # For extreme values, cap at -1 and +1
+            normalized_growth = max(-1.0, min(1.0, float(avg_growth_7d) / 10.0))
+            
+            # Calculate weighted score
+            # Weight: sentiment 60%, historical growth 40%
+            sentiment_weight = 0.6
+            growth_weight = 0.4
+            
+            sentiment_contribution = avg_sentiment * sentiment_weight
+            growth_contribution = normalized_growth * growth_weight
+            score = sentiment_contribution + growth_contribution
+            
+            # Ensure score is in range [-1, +1]
+            score = max(-1.0, min(1.0, score))
+            
+            # Determine risk level and profit potential based on score
+            if score > 0.5:
+                risk_level = "Low"
+                # Profit potential: 80-100 (higher score = higher profit)
+                # Map score from (0.5, 1.0] to [80, 100]
+                # When score = 0.5 -> profit = 80, when score = 1.0 -> profit = 100
+                profit_potential = 80 + ((score - 0.5) / 0.5) * 20
+            elif score > 0:
+                risk_level = "Medium"
+                # Profit potential: 50-70
+                # Map score from (0, 0.5] to [50, 70]
+                # When score = 0 -> profit = 50, when score = 0.5 -> profit = 70
+                profit_potential = 50 + (score / 0.5) * 20
+            elif score >= -0.5:
+                risk_level = "High"
+                # Profit potential: 20-40
+                # Map score from [-0.5, 0] to [20, 40]
+                # When score = -0.5 -> profit = 20, when score = 0 -> profit = 40
+                # Linear interpolation: profit = 20 + ((score - (-0.5)) / (0 - (-0.5))) * (40 - 20)
+                profit_potential = 20 + ((score + 0.5) / 0.5) * 20
+            else:  # score < -0.5
+                risk_level = "Very High"
+                # Profit potential: 0-20
+                # Map score from [-1.0, -0.5) to [0, 20]
+                # When score = -1.0 -> profit = 0, when score = -0.5 -> profit = 20
+                profit_potential = 0 + ((score + 1.0) / (-0.5 + 1.0)) * 20
+            
+            # Ensure profit_potential is in range [0, 100]
+            profit_potential = max(0, min(100, round(profit_potential)))
+            
+            self.logger.info(
+                f"Risk/Profit simulation: sentiment={avg_sentiment:.3f}, "
+                f"growth_7d={avg_growth_7d:.2f}%, score={score:.3f}, "
+                f"risk={risk_level}, profit={profit_potential}"
+            )
+            
+            return {
+                "risk_level": risk_level,
+                "profit_potential": int(profit_potential),
+                "score": round(score, 3),
+                "sentiment_contribution": round(sentiment_contribution, 3),
+                "growth_contribution": round(growth_contribution, 3),
+                "avg_sentiment": round(avg_sentiment, 3),
+                "avg_growth_7d": round(avg_growth_7d, 2)
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error simulating risk/profit: {str(e)}", exc_info=True)
+            # Return default values on error
+            return {
+                "risk_level": "High",
+                "profit_potential": 30,
+                "score": 0.0,
+                "sentiment_contribution": 0.0,
+                "growth_contribution": 0.0,
+                "avg_sentiment": avg_sentiment if avg_sentiment is not None else 0.0,
+                "avg_growth_7d": avg_growth_7d if avg_growth_7d is not None else 0.0,
+                "error": str(e)
+            }
+    
+    def run(self, ticker: str, max_articles: int = 10, save_to_json: bool = False, output_dir: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Run the complete news sentiment and risk analysis pipeline for a ticker.
+        
+        Orchestrates the following pipeline:
+        1. fetch_news() - Fetch latest news articles
+        2. analyze_sentiment() - Analyze sentiment of news articles
+        3. detect_event_type() - Detect event types from news
+        4. analyze_historical_growth() - Analyze historical growth after similar events
+        5. simulate_risk_profit() - Simulate risk and profit potential
+        
+        Args:
+            ticker: Stock ticker symbol (e.g., "AAPL")
+            max_articles: Maximum number of articles to fetch (default: 10)
+            save_to_json: Whether to save results to JSON file (default: False)
+            output_dir: Directory to save JSON file (default: "data" directory)
+        
+        Returns:
+            Dictionary containing:
+            - ticker: Ticker symbol
+            - avg_sentiment: Average sentiment score (-1 to +1)
+            - event: Most common event type detected
+            - avg_growth_7d: Average 7-day growth after similar events
+            - avg_growth_30d: Average 30-day growth after similar events
+            - risk_level: Risk level ("Low", "Medium", "High", "Very High")
+            - profit_potential: Profit potential score (0-100)
+            - latest_headlines: List of latest news headlines
+            - insight: Generated insight based on sentiment and historical data
+            - sentiment_breakdown: Sentiment breakdown statistics
+            - event_breakdown: Event type breakdown
+            - error: Error message if any
+            - saved_to: Path to saved JSON file (if save_to_json=True)
+        """
+        ticker = ticker.upper().strip()
+        self.logger.info(f"Running complete pipeline for {ticker}")
+        
+        result = {
+            "ticker": ticker,
+            "avg_sentiment": None,
+            "event": None,
+            "avg_growth_7d": None,
+            "avg_growth_30d": None,
+            "risk_level": None,
+            "profit_potential": None,
+            "latest_headlines": [],
+            "insight": None,
+            "sentiment_breakdown": None,
+            "event_breakdown": None,
+            "error": None,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        try:
+            # Step 1: Fetch news
+            self.logger.info(f"Step 1: Fetching news for {ticker}")
+            articles = self.fetch_news(ticker, max_articles=max_articles)
+            
+            if not articles:
+                result["error"] = f"No news articles found for {ticker}"
+                result["insight"] = f"No recent news found for {ticker}. Unable to perform sentiment analysis."
+                self.logger.warning(f"No articles found for {ticker}")
+                return result
+            
+            # Extract latest headlines
+            result["latest_headlines"] = [
+                {
+                    "title": article.get("title", "N/A"),
+                    "link": article.get("link", "N/A")
+                }
+                for article in articles[:5]  # Top 5 headlines
+            ]
+            
+            # Step 2: Analyze sentiment
+            self.logger.info(f"Step 2: Analyzing sentiment for {ticker}")
+            sentiment_result = self.analyze_sentiment(articles)
+            
+            avg_sentiment = sentiment_result.get("avg_sentiment", 0.0)
+            result["avg_sentiment"] = avg_sentiment
+            result["sentiment_breakdown"] = sentiment_result.get("sentiment_breakdown", {})
+            
+            # Step 3: Detect event types
+            self.logger.info(f"Step 3: Detecting event types for {ticker}")
+            event_result = self.detect_event_type(articles)
+            
+            if not event_result:
+                result["error"] = "No events detected"
+                result["insight"] = f"Sentiment analysis for {ticker} shows average sentiment of {avg_sentiment:.2f}, but no specific events were detected."
+                return result
+            
+            # Count events by type
+            event_counts = {}
+            for event in event_result:
+                event_type = event.get("event", "unknown")
+                event_counts[event_type] = event_counts.get(event_type, 0) + 1
+            
+            result["event_breakdown"] = event_counts
+            
+            # Get most common event type (excluding general_news)
+            most_common_event = None
+            if event_counts:
+                # Filter out general_news if there are other events
+                filtered_events = {k: v for k, v in event_counts.items() if k != "general_news"}
+                if filtered_events:
+                    most_common_event = max(filtered_events.items(), key=lambda x: x[1])[0]
+                else:
+                    # If only general_news, use it
+                    most_common_event = max(event_counts.items(), key=lambda x: x[1])[0]
+            
+            result["event"] = most_common_event or "general_news"
+            
+            # Step 4: Analyze historical growth
+            if most_common_event and most_common_event != "general_news":
+                self.logger.info(f"Step 4: Analyzing historical growth for {ticker} after {most_common_event} events")
+                growth_result = self.analyze_historical_growth(ticker, most_common_event)
+                
+                result["avg_growth_7d"] = growth_result.get("avg_growth_7d")
+                result["avg_growth_30d"] = growth_result.get("avg_growth_30d")
+                
+                # Step 5: Simulate risk/profit
+                if result["avg_growth_7d"] is not None:
+                    self.logger.info(f"Step 5: Simulating risk/profit for {ticker}")
+                    risk_profit_result = self.simulate_risk_profit(
+                        avg_sentiment,
+                        result["avg_growth_7d"]
+                    )
+                    
+                    result["risk_level"] = risk_profit_result.get("risk_level")
+                    result["profit_potential"] = risk_profit_result.get("profit_potential")
+                else:
+                    # Use sentiment alone if no growth data
+                    self.logger.warning(f"No growth data for {ticker}, using sentiment only")
+                    # Normalize sentiment to approximate growth
+                    estimated_growth = avg_sentiment * 5.0  # Rough estimate
+                    risk_profit_result = self.simulate_risk_profit(
+                        avg_sentiment,
+                        estimated_growth
+                    )
+                    result["risk_level"] = risk_profit_result.get("risk_level")
+                    result["profit_potential"] = risk_profit_result.get("profit_potential")
+            else:
+                # No specific event found, use sentiment only
+                self.logger.info(f"No specific events found for {ticker}, using sentiment only")
+                estimated_growth = avg_sentiment * 5.0  # Rough estimate based on sentiment
+                risk_profit_result = self.simulate_risk_profit(
+                    avg_sentiment,
+                    estimated_growth
+                )
+                result["risk_level"] = risk_profit_result.get("risk_level")
+                result["profit_potential"] = risk_profit_result.get("profit_potential")
+            
+            # Generate insight
+            result["insight"] = self._generate_insight(result)
+            
+            self.logger.info(f"Pipeline complete for {ticker}: risk={result['risk_level']}, profit={result['profit_potential']}")
+            
+        except Exception as e:
+            self.logger.error(f"Error running pipeline for {ticker}: {str(e)}", exc_info=True)
+            result["error"] = str(e)
+            result["insight"] = f"Error analyzing {ticker}: {str(e)}"
+        
+        # Save to JSON if requested
+        if save_to_json:
+            try:
+                import json
+                from pathlib import Path
+                
+                # Determine output directory
+                if output_dir is None:
+                    # Default to data directory
+                    output_dir = Path(__file__).parent.parent.parent / "data"
+                else:
+                    output_dir = Path(output_dir)
+                
+                # Create directory if it doesn't exist
+                output_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Create filename with timestamp
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"{ticker}_analysis_{timestamp}.json"
+                output_file = output_dir / filename
+                
+                # Save to JSON
+                with open(output_file, 'w', encoding='utf-8') as f:
+                    json.dump(result, f, indent=2, default=str, ensure_ascii=False)
+                
+                result["saved_to"] = str(output_file)
+                self.logger.info(f"Results saved to: {output_file}")
+                
+            except Exception as e:
+                self.logger.error(f"Error saving results to JSON: {str(e)}", exc_info=True)
+                result["save_error"] = str(e)
+        
+        return result
+    
+    def _generate_insight(self, result: Dict[str, Any]) -> str:
+        """
+        Generate an insight string based on the analysis results.
+        
+        Args:
+            result: Dictionary containing analysis results
+        
+        Returns:
+            Insight string describing the findings
+        """
+        ticker = result.get("ticker", "Unknown")
+        avg_sentiment = result.get("avg_sentiment", 0.0)
+        event = result.get("event", "general_news")
+        avg_growth_7d = result.get("avg_growth_7d")
+        avg_growth_30d = result.get("avg_growth_30d")
+        risk_level = result.get("risk_level", "Unknown")
+        profit_potential = result.get("profit_potential", 0)
+        
+        # Determine sentiment description
+        if avg_sentiment > 0.3:
+            sentiment_desc = "positive"
+        elif avg_sentiment > -0.3:
+            sentiment_desc = "neutral"
+        else:
+            sentiment_desc = "negative"
+        
+        # Build insight
+        insight_parts = []
+        
+        # Sentiment
+        insight_parts.append(f"{sentiment_desc.capitalize()} sentiment")
+        
+        # Event
+        if event and event != "general_news":
+            # Format event name for display
+            event_display = " ".join(word.capitalize() for word in event.replace("_", " ").split())
+            insight_parts.append(f"with {event_display.lower()} events detected")
+        
+        # Historical growth
+        if avg_growth_7d is not None:
+            if event and event != "general_news":
+                # Format event name
+                event_formatted = " ".join(word.capitalize() for word in event.replace("_", " ").split())
+                if avg_growth_7d > 0:
+                    insight_parts.append(f"shows average {avg_growth_7d:.1f}% gain 7 days after similar {event_formatted.lower()} events")
+                else:
+                    insight_parts.append(f"shows average {abs(avg_growth_7d):.1f}% decline 7 days after similar {event_formatted.lower()} events")
+            else:
+                if avg_growth_7d > 0:
+                    insight_parts.append(f"with average {avg_growth_7d:.1f}% gain historically")
+                else:
+                    insight_parts.append(f"with average {abs(avg_growth_7d):.1f}% decline historically")
+            
+            if avg_growth_30d is not None:
+                if avg_growth_30d > 0:
+                    insight_parts.append(f"and {avg_growth_30d:.1f}% gain over 30 days")
+                else:
+                    insight_parts.append(f"and {abs(avg_growth_30d):.1f}% decline over 30 days")
+        
+        # Risk and profit
+        insight_parts.append(f"indicating {risk_level.lower()} risk")
+        insight_parts.append(f"with {profit_potential}% profit potential")
+        
+        insight = f"{' '.join(insight_parts)}."
+        
+        # Capitalize first letter
+        if insight:
+            insight = insight[0].upper() + insight[1:]
+        
+        return insight
+    
     def __del__(self):
         """Cleanup: close session when agent is destroyed"""
         if hasattr(self, 'session'):
@@ -554,55 +1399,65 @@ class NewsSentimentAgent:
 
 if __name__ == "__main__":
     """
-    Quick test for the NewsSentimentAgent.
+    Demo for the NewsSentimentAgent.
+    Runs the complete pipeline for AAPL as a demonstration.
     """
-    print("=" * 60)
-    print("Testing NewsSentimentAgent")
-    print("=" * 60)
+    import sys
+    import json
+    from pathlib import Path
+    
+    print("=" * 80)
+    print("News Sentiment Agent - Full Pipeline Demo")
+    print("=" * 80)
     
     # Create agent instance
     agent = NewsSentimentAgent()
     
-    # Test with AAPL
-    ticker = "AAPL"
-    print(f"\nFetching news for {ticker}...")
-    print("-" * 60)
+    # Demo: Run full pipeline for AAPL
+    demo_ticker = "AAPL"
+    print(f"\nRunning complete pipeline for {demo_ticker}...")
+    print("-" * 80)
     
-    articles = agent.fetch_news(ticker, max_articles=10)
+    # Run pipeline and save to JSON
+    demo_result = agent.run(demo_ticker, max_articles=10, save_to_json=True)
     
-    if articles:
-        print(f"\n✓ Successfully fetched {len(articles)} articles for {ticker}\n")
-        
-        # Analyze sentiment
-        print("Analyzing sentiment...")
-        print("-" * 60)
-        sentiment_result = agent.analyze_sentiment(articles)
-        
-        # Display results
-        print(f"\nSentiment Analysis Results:")
-        print(f"  Average Sentiment: {sentiment_result['avg_sentiment']:.3f}")
-        print(f"  Sentiment Breakdown:")
-        breakdown = sentiment_result['sentiment_breakdown']
-        print(f"    Positive: {breakdown['positive']} ({breakdown.get('positive_percentage', 0)}%)")
-        print(f"    Neutral: {breakdown['neutral']} ({breakdown.get('neutral_percentage', 0)}%)")
-        print(f"    Negative: {breakdown['negative']} ({breakdown.get('negative_percentage', 0)}%)")
-        print(f"    Total: {breakdown['total']}")
-        
-        print(f"\nArticles with Sentiment:")
-        print("-" * 60)
-        for i, article in enumerate(sentiment_result['articles'], 1):
-            print(f"\nArticle {i}:")
-            print(f"  Title: {article.get('title', 'N/A')}")
-            print(f"  Sentiment: {article.get('sentiment', 'N/A').upper()}")
-            print(f"  Score: {article.get('score', 'N/A')}")
-            print(f"  Link: {article.get('link', 'N/A')}")
-    else:
-        print(f"\n✗ No articles found for {ticker}")
-        print("This might be due to:")
-        print("  1. Network connectivity issues")
-        print("  2. Website structure changes")
-        print("  3. Rate limiting or blocking")
-        print("  4. Ticker symbol not found")
+    print(f"\nPipeline Results for {demo_result['ticker']}:")
+    print("-" * 80)
+    print(f"Average Sentiment: {demo_result.get('avg_sentiment', 'N/A')}")
+    print(f"Most Common Event: {demo_result.get('event', 'N/A')}")
+    print(f"Average 7-Day Growth: {demo_result.get('avg_growth_7d', 'N/A')}%")
+    print(f"Average 30-Day Growth: {demo_result.get('avg_growth_30d', 'N/A')}%")
+    print(f"Risk Level: {demo_result.get('risk_level', 'N/A')}")
+    print(f"Profit Potential: {demo_result.get('profit_potential', 'N/A')}")
+    print(f"\nInsight: {demo_result.get('insight', 'N/A')}")
     
-    print("=" * 60)
+    if demo_result.get('sentiment_breakdown'):
+        print(f"\nSentiment Breakdown:")
+        breakdown = demo_result['sentiment_breakdown']
+        print(f"  Positive: {breakdown.get('positive', 0)} ({breakdown.get('positive_percentage', 0)}%)")
+        print(f"  Neutral: {breakdown.get('neutral', 0)} ({breakdown.get('neutral_percentage', 0)}%)")
+        print(f"  Negative: {breakdown.get('negative', 0)} ({breakdown.get('negative_percentage', 0)}%)")
+    
+    if demo_result.get('event_breakdown'):
+        print(f"\nEvent Breakdown:")
+        for event_type, count in sorted(demo_result['event_breakdown'].items(), key=lambda x: x[1], reverse=True):
+            print(f"  {event_type}: {count}")
+    
+    if demo_result.get('latest_headlines'):
+        print(f"\nLatest Headlines:")
+        for i, headline in enumerate(demo_result['latest_headlines'][:5], 1):
+            print(f"  {i}. {headline.get('title', 'N/A')}")
+    
+    print("\n" + "=" * 80)
+    print("Full JSON Result:")
+    print("=" * 80)
+    print(json.dumps(demo_result, indent=2, default=str))
+    print("=" * 80)
+    
+    # Show where results were saved
+    if demo_result.get('saved_to'):
+        print(f"\nResults saved to: {demo_result['saved_to']}")
+    elif demo_result.get('save_error'):
+        print(f"\nWarning: Could not save results: {demo_result['save_error']}")
+    print("=" * 80)
 
