@@ -72,22 +72,38 @@ class PortfolioAnalyzer:
         except Exception:
             return None
 
-    def analyze_portfolio(self, holdings: Dict[str, float]) -> PortfolioMetrics:
+    def analyze_portfolio(self, holdings: Dict[str, float], use_snowflake: bool = True) -> PortfolioMetrics:
         """
         Analyze a portfolio given holdings dictionary.
+        Tries Snowflake first for faster queries, falls back to yfinance.
 
         Args:
             holdings: Dict mapping ticker to weight
+            use_snowflake: If True, try to fetch from Snowflake first (default: True)
 
         Returns:
             PortfolioMetrics object
         """
         try:
             import yfinance as yf
+            from datetime import datetime, timedelta
 
-            # Download price data
             tickers_list = list(holdings.keys())
-            data = yf.download(tickers_list, period="1y", progress=False)['Close']
+
+            # Try to fetch from Snowflake first (much faster)
+            if use_snowflake:
+                data = self._fetch_from_snowflake(tickers_list)
+                if data is not None and not data.empty:
+                    print(f"✓ Using historical data from Snowflake for {len(tickers_list)} tickers")
+                else:
+                    print(f"⚠ Snowflake data not available, falling back to yfinance")
+                    data = None
+            else:
+                data = None
+
+            # Fallback to yfinance if Snowflake fails or is disabled
+            if data is None or data.empty:
+                data = yf.download(tickers_list, period="1y", progress=False)['Close']
 
             if data.empty:
                 return self._empty_metrics()
@@ -373,6 +389,61 @@ class PortfolioAnalyzer:
             return "High"
         else:
             return "Very High"
+
+    def _fetch_from_snowflake(self, tickers: List[str]) -> pd.DataFrame:
+        """
+        Fetch historical price data from Snowflake.
+
+        Args:
+            tickers: List of ticker symbols
+
+        Returns:
+            DataFrame with Close prices, or None if unavailable
+        """
+        try:
+            from datetime import datetime, timedelta
+            import sys
+            from pathlib import Path
+            sys.path.insert(0, str(Path(__file__).parent.parent))
+
+            from data_warehouse.snowflake_connector import SnowflakeWarehouse
+            from dotenv import load_dotenv
+
+            # Load environment variables
+            load_dotenv()
+
+            # Connect to Snowflake
+            warehouse = SnowflakeWarehouse()
+
+            # Calculate date range (1 year)
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=365)
+
+            # Fetch data for all tickers
+            all_data = {}
+            for ticker in tickers:
+                df = warehouse.get_stock_prices(
+                    ticker=ticker,
+                    start_date=start_date.strftime('%Y-%m-%d'),
+                    end_date=end_date.strftime('%Y-%m-%d')
+                )
+
+                if not df.empty:
+                    all_data[ticker] = df['Close']
+
+            warehouse.close()
+
+            # Combine into single DataFrame
+            if all_data:
+                combined_df = pd.DataFrame(all_data)
+                return combined_df
+            else:
+                return None
+
+        except Exception as e:
+            # Silently fail and return None to fallback to yfinance
+            print(f"Snowflake fetch failed: {str(e)}")
+            return None
 
     def _empty_metrics(self) -> PortfolioMetrics:
         """Return empty metrics for portfolios with no data"""
