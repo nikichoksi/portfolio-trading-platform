@@ -59,3 +59,12 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Airflow
+airflow/airflow.db
+airflow/airflow.db-shm
+airflow/airflow.db-wal
+airflow/logs/
+airflow/airflow.cfg
+airflow/*.json
+airflow/*.json.generated

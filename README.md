@@ -1,247 +1,195 @@
-# Portfolio Trading Platform
+# Portfolio Trading Platform with Multi-Agent Risk Analysis
 
-Complete portfolio management and risk analysis platform with AI agents and scenario simulation.
+A professional trading platform (Robinhood/Zerodha style) with integrated AI-powered risk analysis agents built using LangChain and modern LLMs.
 
-## Features
+## Multi-Agent Architecture
 
-### 🤖 AI Portfolio Agent
-- Intelligent portfolio management
-- Automated trading strategies
-- Pattern detection and analysis
+This platform features specialized AI agents for comprehensive portfolio analysis:
 
-### 📊 Scenario Simulator
-- **Real Market Data**: Yahoo Finance integration for live prices, volatility, and returns
-- **Stress Testing**: Market crash, sector decline, rate change scenarios
-- **Historical Stress Tests**: 2008 crisis, COVID crash, dot-com bubble
-- **Monte Carlo Simulations**: Probabilistic portfolio outcomes with real volatility
-- **Risk Metrics**: VaR and CVaR calculations using actual market data
+### 1. Portfolio Insight Agent ✅
+**Conversational portfolio analysis**
 
-### 📈 Trading Dashboard
-- Real-time portfolio monitoring
-- Order execution
-- Portfolio analytics and visualizations
+Role: Interprets user portfolios and provides comprehensive risk-return analysis
+- Parses natural language portfolio descriptions
+- Calculates 7 core metrics (volatility, beta, Sharpe ratio, max drawdown, diversification, sector concentration, top holdings)
+- Generates narrative explanations of portfolio characteristics
+- Identifies strengths and weaknesses in current allocation
+- Interactive visualizations (pie charts, risk metrics)
+
+Example Queries:
+- "Analyze my portfolio of AAPL, MSFT, and TSLA"
+- "What's the overall risk level of my investments?"
+- "How diversified is my portfolio?"
+
+### 2. Risk Profiler Agent ✅
+**Risk tolerance assessment and matching**
+
+Role: Evaluates if portfolio aligns with investor's risk profile
+- Assesses portfolio risk characteristics (volatility, concentration, sector exposure)
+- Compares against risk tolerance benchmarks (conservative/moderate/aggressive)
+- Calculates fit scores (0-100) with mismatch identification
+- Suggests risk-adjusted alternatives and best-matching profile
+
+Example Queries:
+- "Is this portfolio suitable for a conservative investor?"
+- "Does my allocation match a moderate risk profile?"
+- "What risk profile best suits my portfolio?"
+
+### 3. Scenario Simulator Agent ✅
+**What-if analysis and stress testing**
+
+Role: Tests portfolio performance under hypothetical market conditions
+- Runs scenario simulations (market crashes, sector declines, rate changes)
+- Performs historical stress tests (2008 financial crisis, 2020 COVID crash, 2000 dot-com bubble)
+- Monte Carlo simulations for probabilistic outcomes
+- Calculates position-level impact breakdown
+
+Example Queries:
+- "What happens to my portfolio if tech stocks drop 20%?"
+- "How would my investments perform in a 2008-style crisis?"
+- "Simulate a 10% market correction"
+
+### 4. Rebalancing Strategist Agent ✅
+**Portfolio optimization and adjustment recommendations**
+
+Role: Suggests specific actions to improve risk-return profile
+- Optimizes allocations using Modern Portfolio Theory (Sharpe, min-variance, risk-parity)
+- Generates specific buy/sell rebalancing trades with dollar amounts
+- Identifies overweight/underweight positions relative to targets
+- Tax-aware rebalancing suggestions
+
+Example Queries:
+- "How should I rebalance to reduce risk by 15%?"
+- "Optimize my portfolio to maximize Sharpe ratio"
+- "What trades do I need to reach my target allocation?"
+
+### 5. Comparative Analytics Agent ✅
+**Cross-sectional analysis and benchmarking**
+
+Role: Compares different investment options, sectors, or strategies
+- Side-by-side portfolio comparisons across key metrics
+- Benchmarks against market indices (S&P 500, NASDAQ, 60/40, Aggressive Growth)
+- Analyzes sector-level risk differences
+- Peer portfolio analysis with winner identification
+
+Example Queries:
+- "Compare the risk of investing in tech vs utilities"
+- "How does my portfolio compare to the S&P 500?"
+- "Which is less volatile: AAPL or MSFT?"
+
+### 6. Temporal Intelligence Agent ✅
+**Time-based risk analysis and horizon planning**
+
+Role: Analyzes how risk changes across different time periods
+- Time-horizon suitability analysis (short/medium/long-term investment)
+- Rolling risk metrics over time with trend detection
+- Risk evolution analysis across multiple periods
+- Appropriate recommendations based on investment timeframe
+
+Example Queries:
+- "Is this portfolio suitable for a 10-year investment horizon?"
+- "How has my portfolio risk changed over the last year?"
+- "What's my 5-year vs 1-year volatility?"
+
+## Platform Features
+
+- **Live Market View**: Real-time stock prices organized by sectors
+- **Technical Analysis**: Candlestick charts with pattern detection (Head & Shoulders, Double Top/Bottom, etc.)
+- **Quick Trade**: Market and limit orders with instant execution
+- **Order Management**: Pending orders with automatic execution when conditions are met
+- **Portfolio Overview**: Track holdings, P&L, and performance metrics
+- **AI Risk Analysis**: Powered by Portfolio Insight Agent with interactive visualizations
 
 ## Quick Start
 
-1. **Install dependencies**
+### Prerequisites
+
+- Python 3.10 or higher
+- API key from Anthropic (Claude) or OpenAI
+
+### Installation
+
 ```bash
+# Clone the repository
+cd portfolio-insight-agent
+
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
 pip install -r requirements.txt
+
+# Set up environment variables
+cp .env.example .env
+# Edit .env and add your API keys
 ```
 
-2. **Run Scenario Simulator**
+### Running the Application
+
 ```bash
-python src/scenario_simulator.py
+# Run the Trading Platform (Main Application)
+streamlit run src/app_trading.py
+
+# Or run the standalone Portfolio Insight Agent
+streamlit run src/app.py
+
+# Or use the agent programmatically
+python src/agents/portfolio_agent.py
 ```
 
-3. **Access the API**
-- API: http://localhost:8000
-- Interactive Docs: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
-
-4. **Test the API**
-```bash
-# Health check
-curl http://localhost:8000/health
-
-# Get scenario templates
-curl http://localhost:8000/api/v1/scenarios/scenario-templates
-
-# Get historical events
-curl http://localhost:8000/api/v1/scenarios/historical-events
-```
-
-## API Endpoints
-
-### Stress Test Portfolio
-```http
-POST /api/v1/scenarios/stress-test
-```
-
-**Example Request:**
-```json
-{
-  "portfolio": {
-    "positions": [
-      {"symbol": "AAPL", "quantity": 100, "current_price": 175.50},
-      {"symbol": "MSFT", "quantity": 50, "current_price": 380.25}
-    ]
-  },
-  "scenario_type": "market_crash",
-  "severity": 0.30,
-  "duration_days": 30
-}
-```
-
-### Historical Stress Test
-```http
-POST /api/v1/scenarios/historical-stress-test
-```
-
-**Example Request:**
-```json
-{
-  "portfolio": {
-    "positions": [...]
-  },
-  "historical_event": "covid_crash",
-  "include_recovery": true
-}
-```
-
-### Monte Carlo Simulation
-```http
-POST /api/v1/scenarios/monte-carlo
-```
-
-**Example Request:**
-```json
-{
-  "portfolio": {"positions": [...]},
-  "time_horizon_days": 252,
-  "num_simulations": 10000,
-  "confidence_level": 0.95
-}
-```
-
-### Calculate VaR
-```http
-POST /api/v1/scenarios/var
-```
-
-**Example Request:**
-```json
-{
-  "portfolio": {"positions": [...]},
-  "time_horizon_days": 1,
-  "confidence_level": 0.95,
-  "method": "parametric"
-}
-```
-
-### Get Templates
-```http
-GET /api/v1/scenarios/scenario-templates
-GET /api/v1/scenarios/historical-events
-```
-
-### Market Data Endpoints
-
-**Get Current Stock Price**
-```http
-GET /api/v1/market-data/price/{symbol}
-```
-Example: `GET /api/v1/market-data/price/AAPL`
-
-**Get Stock Information**
-```http
-GET /api/v1/market-data/info/{symbol}
-```
-Returns: name, market cap, sector, beta, P/E ratio, dividend yield
-
-**Get Stock Volatility**
-```http
-GET /api/v1/market-data/volatility/{symbol}?period=1y
-```
-Period options: `1mo`, `3mo`, `6mo`, `1y`, `2y`, `5y`
-
-**Get Expected Return**
-```http
-GET /api/v1/market-data/expected-return/{symbol}?period=1y
-```
-
-**Get Portfolio Metrics**
-```http
-GET /api/v1/market-data/portfolio-metrics?symbols=AAPL,MSFT,GOOGL
-```
-Returns metrics for multiple stocks at once
-
-## File Structure
+## Project Structure
 
 ```
-portfolio-trading-platform/
+portfolio-insight-agent/
 ├── src/
-│   ├── scenario_simulator.py    # Scenario Simulator Agent (FastAPI)
-│   ├── portfolio_agent.py       # AI Portfolio Agent
-│   ├── app.py                   # Main application
-│   ├── app_dashboard.py         # Dashboard app
-│   ├── app_trading.py           # Trading app
-│   ├── core/
-│   │   └── portfolio_metrics.py
-│   ├── services/
+│   ├── agents/              # Multi-agent system (LangChain)
+│   │   ├── portfolio_agent.py              # Portfolio Insight Agent
+│   │   ├── risk_profiler_agent.py          # Risk Profiler Agent
+│   │   ├── scenario_simulator_agent.py     # Scenario Simulator Agent
+│   │   ├── rebalancing_strategist_agent.py # Rebalancing Agent
+│   │   ├── comparative_analytics_agent.py  # Comparative Analytics Agent
+│   │   └── temporal_intelligence_agent.py  # Temporal Intelligence Agent
+│   ├── database/            # SQLite database models
+│   │   └── models.py
+│   ├── services/            # Business logic services
 │   │   ├── portfolio_service.py
 │   │   └── order_execution.py
-│   ├── utils/
-│   │   ├── market_data.py
+│   ├── utils/               # Helper functions
 │   │   ├── portfolio_analytics.py
 │   │   ├── pattern_detection.py
-│   │   ├── sector_analysis.py
-│   │   └── visualizations.py
-│   └── database/
-│       └── models.py
-├── tests/
-├── requirements.txt             # Python dependencies
-├── .env                        # Environment variables
-└── README.md                   # This file
+│   │   └── market_data.py
+│   ├── app_trading.py       # Main trading platform
+│   └── app.py               # Standalone agent UI
+├── tests/                   # Test suite
+├── data/                    # Database and cache files
+├── config/                  # Configuration files
+└── dev-notes.md             # Development guide
 ```
 
-## Configuration
+## Example Usage
 
-Create a `.env` file with:
-```env
-HOST=0.0.0.0
-PORT=8000
-DEBUG=True
+```python
+from src.agents.portfolio_agent import PortfolioInsightAgent
 
-# Optional API keys
-# ALPHA_VANTAGE_API_KEY=your_key
-# POLYGON_API_KEY=your_key
-# FRED_API_KEY=your_key
+agent = PortfolioInsightAgent()
+result = agent.analyze("Analyze my portfolio: 40% AAPL, 30% MSFT, 30% GOOGL")
+print(result)
 ```
 
-## Testing
-
-Use the interactive documentation at http://localhost:8000/docs or curl:
+## Development
 
 ```bash
-curl -X POST "http://localhost:8000/api/v1/scenarios/var" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "portfolio": {
-      "positions": [
-        {"symbol": "AAPL", "quantity": 100, "current_price": 175.50}
-      ]
-    },
-    "confidence_level": 0.95,
-    "time_horizon_days": 1
-  }'
+# Run tests
+pytest
+
+# Format code
+black src/ tests/
+
+# Lint
+ruff check src/ tests/
 ```
 
-## Notes
+## License
 
-- **Real market data** from Yahoo Finance (no API key required)
-- Automatically fetches current prices, volatility, and returns
-- Falls back to defaults if data unavailable or rate-limited
-- Monte Carlo uses Geometric Brownian Motion with real volatility
-- VaR supports 3 methods: parametric, historical, monte_carlo
-- All tested and verified - 100% functional ✅
-
-## Yahoo Finance Integration
-
-The backend now fetches real market data:
-- **Current Prices**: Live stock prices
-- **Historical Volatility**: Calculated from 1-year price data
-- **Expected Returns**: Based on historical performance
-- **Stock Info**: Company details, sector, beta, P/E ratio
-
-**Example Usage:**
-```bash
-# Get AAPL current price
-curl http://localhost:8000/api/v1/market-data/price/AAPL
-
-# Get AAPL volatility
-curl http://localhost:8000/api/v1/market-data/volatility/AAPL
-
-# Get multiple stocks metrics
-curl "http://localhost:8000/api/v1/market-data/portfolio-metrics?symbols=AAPL,MSFT,TSLA"
-```
-
+MIT
