@@ -20,6 +20,12 @@ yfinance==0.2.31
 requests>=2.31.0
 beautifulsoup4>=4.12.0
 
+# Sentiment Analysis
+nltk>=3.8.0
+# Optional: For better accuracy (requires more resources)
+# transformers>=4.30.0
+# torch>=2.0.0
+
 # Snowflake Data Warehouse
 snowflake-connector-python==3.6.0
 snowflake-sqlalchemy==1.5.1

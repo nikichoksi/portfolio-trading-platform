@@ -6,11 +6,27 @@ Fetches and analyzes news articles for stock tickers using web scraping.
 import os
 import logging
 import requests
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from bs4 import BeautifulSoup
 from datetime import datetime
 import time
 from dotenv import load_dotenv
+
+# Sentiment analysis imports
+try:
+    from nltk.sentiment import SentimentIntensityAnalyzer
+    import nltk
+    NLTK_AVAILABLE = True
+except ImportError:
+    NLTK_AVAILABLE = False
+    logging.warning("NLTK not available. Install with: pip install nltk")
+
+try:
+    from transformers import pipeline
+    TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    TRANSFORMERS_AVAILABLE = False
+    logging.warning("Transformers not available. Install with: pip install transformers torch")
 
 # Load environment variables
 load_dotenv()
@@ -50,7 +66,53 @@ class NewsSentimentAgent:
         self.session = requests.Session()
         self.session.headers.update(self.headers)
         
+        # Initialize sentiment analyzer
+        self.sentiment_analyzer = None
+        self.use_huggingface = False
+        self._initialize_sentiment_analyzer()
+        
         self.logger.info("NewsSentimentAgent initialized successfully")
+    
+    def _initialize_sentiment_analyzer(self):
+        """
+        Initialize sentiment analyzer (VADER or Hugging Face).
+        Tries Hugging Face first, falls back to VADER.
+        """
+        # Try Hugging Face first (more accurate but heavier)
+        if TRANSFORMERS_AVAILABLE:
+            try:
+                self.logger.info("Initializing Hugging Face sentiment analyzer...")
+                self.sentiment_analyzer = pipeline(
+                    "sentiment-analysis",
+                    model="distilbert-base-uncased-finetuned-sst-2-english",
+                    device=-1  # Use CPU (-1) or GPU (0+)
+                )
+                self.use_huggingface = True
+                self.logger.info("Hugging Face sentiment analyzer initialized")
+                return
+            except Exception as e:
+                self.logger.warning(f"Failed to initialize Hugging Face analyzer: {str(e)}")
+                self.logger.info("Falling back to VADER sentiment analyzer")
+        
+        # Fall back to VADER (lighter, good for financial news)
+        if NLTK_AVAILABLE:
+            try:
+                # Download VADER lexicon if not already downloaded
+                try:
+                    nltk.data.find('vader_lexicon')
+                except LookupError:
+                    self.logger.info("Downloading VADER lexicon...")
+                    nltk.download('vader_lexicon', quiet=True)
+                
+                self.sentiment_analyzer = SentimentIntensityAnalyzer()
+                self.use_huggingface = False
+                self.logger.info("VADER sentiment analyzer initialized")
+            except Exception as e:
+                self.logger.error(f"Failed to initialize VADER analyzer: {str(e)}")
+                self.sentiment_analyzer = None
+        else:
+            self.logger.error("Neither NLTK nor Transformers available. Sentiment analysis disabled.")
+            self.sentiment_analyzer = None
     
     def fetch_news(self, ticker: str, max_articles: int = 10) -> List[Dict[str, str]]:
         """
@@ -289,6 +351,201 @@ class NewsSentimentAgent:
         
         return unique_articles
     
+    def analyze_sentiment(self, news_data: List[Dict[str, str]]) -> Dict[str, Any]:
+        """
+        Analyze sentiment of news articles.
+        
+        Args:
+            news_data: List of news article dictionaries with 'title' and optionally 'summary'
+        
+        Returns:
+            Dictionary containing:
+            - avg_sentiment: Average sentiment score (-1 to +1)
+            - sentiment_breakdown: Dictionary with sentiment counts and article details
+            - articles: List of articles with sentiment analysis
+        """
+        if not news_data:
+            self.logger.warning("Empty news data provided for sentiment analysis")
+            return {
+                "avg_sentiment": 0.0,
+                "sentiment_breakdown": {
+                    "positive": 0,
+                    "neutral": 0,
+                    "negative": 0,
+                    "total": 0
+                },
+                "articles": []
+            }
+        
+        if self.sentiment_analyzer is None:
+            self.logger.error("Sentiment analyzer not initialized. Cannot analyze sentiment.")
+            return {
+                "avg_sentiment": 0.0,
+                "sentiment_breakdown": {
+                    "positive": 0,
+                    "neutral": 0,
+                    "negative": 0,
+                    "total": 0,
+                    "error": "Sentiment analyzer not available"
+                },
+                "articles": []
+            }
+        
+        self.logger.info(f"Analyzing sentiment for {len(news_data)} articles")
+        
+        analyzed_articles = []
+        sentiment_scores = []
+        sentiment_counts = {"positive": 0, "neutral": 0, "negative": 0}
+        
+        for article in news_data:
+            try:
+                # Get text to analyze (prefer summary, fall back to title)
+                text = article.get('summary', article.get('title', ''))
+                
+                if not text:
+                    self.logger.warning(f"Skipping article with no text: {article}")
+                    continue
+                
+                # Analyze sentiment
+                if self.use_huggingface:
+                    sentiment_result = self._analyze_with_huggingface(text)
+                else:
+                    sentiment_result = self._analyze_with_vader(text)
+                
+                # Convert to numeric score
+                sentiment_label = sentiment_result["sentiment"]
+                sentiment_score = sentiment_result["score"]
+                
+                # Map to numeric value: positive = +1, neutral = 0, negative = -1
+                if sentiment_label == "positive":
+                    numeric_score = sentiment_score  # 0.0 to 1.0 -> 0.0 to 1.0
+                    sentiment_counts["positive"] += 1
+                elif sentiment_label == "negative":
+                    numeric_score = -sentiment_score  # 0.0 to 1.0 -> -1.0 to 0.0
+                    sentiment_counts["negative"] += 1
+                else:  # neutral
+                    numeric_score = 0.0
+                    sentiment_counts["neutral"] += 1
+                
+                sentiment_scores.append(numeric_score)
+                
+                # Add sentiment to article
+                analyzed_article = {
+                    "title": article.get("title", ""),
+                    "summary": article.get("summary", ""),
+                    "link": article.get("link", ""),
+                    "sentiment": sentiment_label,
+                    "score": round(sentiment_score, 3)
+                }
+                analyzed_articles.append(analyzed_article)
+                
+            except Exception as e:
+                self.logger.error(f"Error analyzing sentiment for article: {str(e)}", exc_info=True)
+                continue
+        
+        # Calculate average sentiment
+        if sentiment_scores:
+            avg_sentiment = sum(sentiment_scores) / len(sentiment_scores)
+            avg_sentiment = round(avg_sentiment, 3)
+        else:
+            avg_sentiment = 0.0
+        
+        # Build sentiment breakdown
+        total_articles = len(analyzed_articles)
+        sentiment_breakdown = {
+            "positive": sentiment_counts["positive"],
+            "neutral": sentiment_counts["neutral"],
+            "negative": sentiment_counts["negative"],
+            "total": total_articles,
+            "positive_percentage": round((sentiment_counts["positive"] / total_articles * 100), 2) if total_articles > 0 else 0,
+            "neutral_percentage": round((sentiment_counts["neutral"] / total_articles * 100), 2) if total_articles > 0 else 0,
+            "negative_percentage": round((sentiment_counts["negative"] / total_articles * 100), 2) if total_articles > 0 else 0
+        }
+        
+        self.logger.info(f"Sentiment analysis complete. Avg sentiment: {avg_sentiment}")
+        
+        return {
+            "avg_sentiment": avg_sentiment,
+            "sentiment_breakdown": sentiment_breakdown,
+            "articles": analyzed_articles
+        }
+    
+    def _analyze_with_huggingface(self, text: str) -> Dict[str, Any]:
+        """
+        Analyze sentiment using Hugging Face transformers.
+        
+        Args:
+            text: Text to analyze
+        
+        Returns:
+            Dictionary with 'sentiment' and 'score'
+        """
+        try:
+            # Hugging Face returns [{'label': 'POSITIVE' or 'NEGATIVE', 'score': 0.0-1.0}]
+            result = self.sentiment_analyzer(text)[0]
+            
+            label = result['label'].upper()
+            score = result['score']
+            
+            # Hugging Face model only returns POSITIVE or NEGATIVE
+            # Consider neutral if score is close to 0.5
+            if score < 0.55 and score > 0.45:
+                sentiment = "neutral"
+                score = 0.5
+            elif label == "POSITIVE":
+                sentiment = "positive"
+            else:
+                sentiment = "negative"
+            
+            return {
+                "sentiment": sentiment,
+                "score": round(score, 3)
+            }
+        except Exception as e:
+            self.logger.error(f"Error in Hugging Face sentiment analysis: {str(e)}")
+            return {"sentiment": "neutral", "score": 0.5}
+    
+    def _analyze_with_vader(self, text: str) -> Dict[str, Any]:
+        """
+        Analyze sentiment using VADER sentiment analyzer.
+        
+        Args:
+            text: Text to analyze
+        
+        Returns:
+            Dictionary with 'sentiment' and 'score'
+        """
+        try:
+            # VADER returns {'neg': 0.0, 'neu': 0.0, 'pos': 0.0, 'compound': -1.0 to 1.0}
+            scores = self.sentiment_analyzer.polarity_scores(text)
+            
+            compound = scores['compound']
+            
+            # Determine sentiment based on compound score
+            # compound >= 0.05: positive
+            # compound <= -0.05: negative
+            # else: neutral
+            if compound >= 0.05:
+                sentiment = "positive"
+                # Score is the confidence: use the positive score or compound score
+                score = max(scores['pos'], abs(compound))
+            elif compound <= -0.05:
+                sentiment = "negative"
+                # Score is the confidence: use the negative score or absolute compound score
+                score = max(scores['neg'], abs(compound))
+            else:
+                sentiment = "neutral"
+                # Score reflects how neutral (closer to 0 = more neutral)
+                score = scores['neu']
+            
+            return {
+                "sentiment": sentiment,
+                "score": round(score, 3)
+            }
+        except Exception as e:
+            self.logger.error(f"Error in VADER sentiment analysis: {str(e)}")
+            return {"sentiment": "neutral", "score": 0.5}
+    
     def __del__(self):
         """Cleanup: close session when agent is destroyed"""
         if hasattr(self, 'session'):
@@ -316,12 +573,29 @@ if __name__ == "__main__":
     if articles:
         print(f"\n✓ Successfully fetched {len(articles)} articles for {ticker}\n")
         
-        for i, article in enumerate(articles, 1):
-            print(f"Article {i}:")
+        # Analyze sentiment
+        print("Analyzing sentiment...")
+        print("-" * 60)
+        sentiment_result = agent.analyze_sentiment(articles)
+        
+        # Display results
+        print(f"\nSentiment Analysis Results:")
+        print(f"  Average Sentiment: {sentiment_result['avg_sentiment']:.3f}")
+        print(f"  Sentiment Breakdown:")
+        breakdown = sentiment_result['sentiment_breakdown']
+        print(f"    Positive: {breakdown['positive']} ({breakdown.get('positive_percentage', 0)}%)")
+        print(f"    Neutral: {breakdown['neutral']} ({breakdown.get('neutral_percentage', 0)}%)")
+        print(f"    Negative: {breakdown['negative']} ({breakdown.get('negative_percentage', 0)}%)")
+        print(f"    Total: {breakdown['total']}")
+        
+        print(f"\nArticles with Sentiment:")
+        print("-" * 60)
+        for i, article in enumerate(sentiment_result['articles'], 1):
+            print(f"\nArticle {i}:")
             print(f"  Title: {article.get('title', 'N/A')}")
-            print(f"  Summary: {article.get('summary', 'N/A')[:100]}...")
+            print(f"  Sentiment: {article.get('sentiment', 'N/A').upper()}")
+            print(f"  Score: {article.get('score', 'N/A')}")
             print(f"  Link: {article.get('link', 'N/A')}")
-            print()
     else:
         print(f"\n✗ No articles found for {ticker}")
         print("This might be due to:")
