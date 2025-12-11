@@ -4,14 +4,13 @@ Provides conversational portfolio analysis with AI-generated insights.
 """
 
 import os
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Callable
 from dotenv import load_dotenv
 
 from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
-from langchain.agents import AgentExecutor, create_tool_calling_agent
-from langchain.tools import Tool
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.tools import tool
+from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage, AIMessage
 
 import sys
@@ -61,6 +60,8 @@ class PortfolioInsightAgent:
 
         self.service = service
         self.use_openai = use_openai
+        self.model_name = model
+        self.temperature = temperature
 
         # Initialize LLM
         if use_openai:
@@ -77,94 +78,67 @@ class PortfolioInsightAgent:
         # Create tools
         self.tools = self._create_tools()
 
-        # Create agent
-        self.agent = self._create_agent()
-        self.agent_executor = AgentExecutor(
-            agent=self.agent,
-            tools=self.tools,
-            verbose=True,
-            handle_parsing_errors=True,
-            max_iterations=5
-        )
+        # Create agent using new LangChain 1.0+ API
+        self.agent_graph = self._create_agent()
 
-    def _create_tools(self) -> List[Tool]:
+    def _create_tools(self) -> List[Callable]:
         """Create tools for the agent to use"""
+        
+        analyzer = self.analyzer
+        sector_analyzer = self.sector_analyzer if LEGACY_MODE else None
+        format_metrics = self._format_metrics
 
-        def analyze_portfolio_tool(query: str) -> str:
-            """
-            Analyze a portfolio from a natural language description.
-            Example: "40% AAPL, 30% MSFT, 30% GOOGL"
+        @tool
+        def analyze_portfolio(query: str) -> str:
+            """Analyzes a portfolio and returns comprehensive risk-return metrics.
+            Input should be a portfolio description like '40% AAPL, 30% MSFT, 30% GOOGL'.
+            Returns annual return, volatility, Sharpe ratio, max drawdown, beta, VaR, and CVaR.
             """
             try:
-                holdings = self.analyzer.parse_portfolio(query)
+                holdings = analyzer.parse_portfolio(query)
                 if not holdings:
                     return "Could not parse portfolio. Please provide format like: 40% AAPL, 30% MSFT, 30% GOOGL"
 
-                metrics = self.analyzer.analyze_portfolio(holdings)
-                return self._format_metrics(metrics)
+                metrics = analyzer.analyze_portfolio(holdings)
+                return format_metrics(metrics)
 
             except Exception as e:
                 return f"Error analyzing portfolio: {str(e)}"
 
-        def get_correlation_matrix(tickers: str) -> str:
-            """
-            Get correlation matrix for given tickers.
-            Example: "AAPL,MSFT,GOOGL"
+        @tool
+        def get_correlations(tickers: str) -> str:
+            """Returns correlation matrix for given stock tickers.
+            Input should be comma-separated tickers like 'AAPL,MSFT,GOOGL'.
+            Useful for understanding diversification between assets.
             """
             try:
                 ticker_list = [t.strip().upper() for t in tickers.split(",")]
-                corr_matrix = self.analyzer.get_asset_correlations(ticker_list)
+                corr_matrix = analyzer.get_asset_correlations(ticker_list)
                 return corr_matrix.to_string()
             except Exception as e:
                 return f"Error getting correlations: {str(e)}"
 
-        def analyze_sector_exposure(portfolio_str: str) -> str:
-            """
-            Analyze sector exposure for a portfolio.
-            Example: "40% AAPL, 30% MSFT, 30% GOOGL"
+        @tool
+        def analyze_sectors(portfolio_str: str) -> str:
+            """Analyzes portfolio sector exposure and concentration.
+            Input should be a portfolio description like '40% AAPL, 30% MSFT, 30% GOOGL'.
+            Returns sector breakdown, concentration metrics, and risk profile.
             """
             try:
-                holdings = self.analyzer.parse_portfolio(portfolio_str)
+                holdings = analyzer.parse_portfolio(portfolio_str)
                 if not holdings:
                     return "Could not parse portfolio."
 
-                sector_summary = self.sector_analyzer.get_sector_summary(holdings)
-                return self.sector_analyzer.format_sector_analysis(sector_summary)
+                if sector_analyzer:
+                    sector_summary = sector_analyzer.get_sector_summary(holdings)
+                    return sector_analyzer.format_sector_analysis(sector_summary)
+                else:
+                    return "Sector analysis not available in this mode."
 
             except Exception as e:
                 return f"Error analyzing sectors: {str(e)}"
 
-        tools = [
-            Tool(
-                name="analyze_portfolio",
-                func=analyze_portfolio_tool,
-                description=(
-                    "Analyzes a portfolio and returns comprehensive risk-return metrics. "
-                    "Input should be a portfolio description like '40% AAPL, 30% MSFT, 30% GOOGL'. "
-                    "Returns annual return, volatility, Sharpe ratio, max drawdown, beta, VaR, and CVaR."
-                )
-            ),
-            Tool(
-                name="get_correlations",
-                func=get_correlation_matrix,
-                description=(
-                    "Returns correlation matrix for given stock tickers. "
-                    "Input should be comma-separated tickers like 'AAPL,MSFT,GOOGL'. "
-                    "Useful for understanding diversification between assets."
-                )
-            ),
-            Tool(
-                name="analyze_sectors",
-                func=analyze_sector_exposure,
-                description=(
-                    "Analyzes portfolio sector exposure and concentration. "
-                    "Input should be a portfolio description like '40% AAPL, 30% MSFT, 30% GOOGL'. "
-                    "Returns sector breakdown, concentration metrics, and risk profile."
-                )
-            )
-        ]
-
-        return tools
+        return [analyze_portfolio, get_correlations, analyze_sectors]
 
     def _format_metrics(self, metrics: PortfolioMetrics) -> str:
         """Format portfolio metrics into a readable string"""
@@ -237,7 +211,7 @@ Interpretation:
 """
 
     def _create_agent(self):
-        """Create the LangChain agent with system prompt"""
+        """Create the LangChain agent with system prompt using new API"""
 
         system_prompt = """You are a Portfolio Insight Agent, an expert financial analyst specializing in portfolio risk assessment.
 
@@ -262,14 +236,12 @@ Communication style:
 
 Remember: You're providing analysis and education, not financial advice or recommendations to buy/sell specific securities."""
 
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            MessagesPlaceholder(variable_name="chat_history", optional=True),
-            ("human", "{input}"),
-            MessagesPlaceholder(variable_name="agent_scratchpad"),
-        ])
-
-        agent = create_tool_calling_agent(self.llm, self.tools, prompt)
+        # Use the new LangChain 1.0+ create_agent API
+        agent = create_agent(
+            model=self.llm,
+            tools=self.tools,
+            system_prompt=system_prompt
+        )
         return agent
 
     def analyze(self, query: str, chat_history: Optional[List] = None) -> str:
@@ -284,28 +256,31 @@ Remember: You're providing analysis and education, not financial advice or recom
             Agent's response with analysis
         """
         try:
-            response = self.agent_executor.invoke({
-                "input": query,
-                "chat_history": chat_history or []
-            })
-
-            output = response["output"]
-
-            # AgentExecutor can return output in different formats
-            # Handle list format: [{'text': '...', 'type': 'text', 'index': 0}]
-            if isinstance(output, list):
-                if len(output) > 0 and isinstance(output[0], dict):
-                    if 'text' in output[0]:
-                        return output[0]['text']
-                # If list but not in expected format, join all items
-                return ' '.join(str(item) for item in output)
-
-            # Handle string format (fallback)
-            if isinstance(output, str):
-                return output
-
-            # Handle any other format
-            return str(output)
+            # Build messages list
+            messages = []
+            if chat_history:
+                messages.extend(chat_history)
+            messages.append(HumanMessage(content=query))
+            
+            # Invoke the agent graph
+            result = self.agent_graph.invoke({"messages": messages})
+            
+            # Extract the response from the result
+            if "messages" in result:
+                # Get the last AI message
+                for msg in reversed(result["messages"]):
+                    if isinstance(msg, AIMessage):
+                        content = msg.content
+                        # Handle list format responses
+                        if isinstance(content, list):
+                            if len(content) > 0 and isinstance(content[0], dict):
+                                if 'text' in content[0]:
+                                    return content[0]['text']
+                            return ' '.join(str(item) for item in content)
+                        return str(content)
+            
+            # Fallback: return string representation
+            return str(result)
 
         except Exception as e:
             return f"Error during analysis: {str(e)}"

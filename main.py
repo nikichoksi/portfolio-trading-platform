@@ -3,20 +3,19 @@ Scenario Simulator Agent - Portfolio Stress Testing and Risk Analysis API
 Consolidated FastAPI backend with all functionality in a single file
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
 from typing import List, Dict, Optional, Literal, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 import numpy as np
 from scipy import stats
 import uvicorn
 import logging
 import yfinance as yf
 import pandas as pd
-from datetime import datetime, timedelta
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
