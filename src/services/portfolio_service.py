@@ -146,10 +146,15 @@ class PortfolioService:
     # ============= PRICE OPERATIONS =============
 
     def get_live_prices(self, tickers: List[str]) -> Dict[str, float]:
-        """Fetch live prices for tickers"""
+        """Fetch live prices for tickers with rate limiting"""
+        import time
         prices = {}
-        for ticker in tickers:
+        for i, ticker in enumerate(tickers):
             try:
+                # Add delay to avoid rate limiting (0.1 seconds between requests)
+                if i > 0:
+                    time.sleep(0.1)
+                
                 stock = yf.Ticker(ticker)
                 # Try to get current price from various sources
                 info = stock.info
@@ -163,8 +168,12 @@ class PortfolioService:
 
                 prices[ticker] = float(price)
             except Exception as e:
-                print(f"Error fetching price for {ticker}: {e}")
+                # Don't print every error to avoid spam
+                if "429" not in str(e) and "Too Many Requests" not in str(e):
+                    print(f"Error fetching price for {ticker}: {e}")
                 prices[ticker] = 0
+                # Add extra delay after errors
+                time.sleep(0.2)
 
         return prices
 
@@ -179,8 +188,12 @@ class PortfolioService:
             return pd.DataFrame()
 
     def get_stock_info(self, ticker: str) -> Dict:
-        """Get detailed stock information"""
+        """Get detailed stock information with rate limiting"""
+        import time
         try:
+            # Add small delay to avoid rate limiting
+            time.sleep(0.15)
+            
             stock = yf.Ticker(ticker)
             info = stock.info
 
@@ -202,7 +215,11 @@ class PortfolioService:
                 '52_week_low': info.get('fiftyTwoWeekLow', 0),
             }
         except Exception as e:
-            print(f"Error fetching info for {ticker}: {e}")
+            # Suppress 429 errors to reduce noise
+            if "429" not in str(e) and "Too Many Requests" not in str(e):
+                print(f"Error fetching info for {ticker}: {e}")
+            # Add delay after errors
+            time.sleep(0.2)
             return {}
 
     # ============= PORTFOLIO OPERATIONS =============

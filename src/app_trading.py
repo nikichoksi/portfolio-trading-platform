@@ -5,6 +5,11 @@ Complete trading interface with market view, stock analytics, pattern detection,
 
 import streamlit as st
 import os
+
+# Set environment variables BEFORE any imports to prevent torchvision issues
+os.environ.setdefault("TRANSFORMERS_NO_TORCHVISION", "1")
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 from typing import List, Dict
 import plotly.graph_objects as go
 import plotly.express as px
@@ -594,6 +599,222 @@ def create_candlestick_chart_with_patterns(df: pd.DataFrame, ticker: str, patter
     return fig
 
 
+def render_news_view():
+    """Render news headlines view"""
+    st.markdown('<div class="main-header">📰 News Headlines</div>', unsafe_allow_html=True)
+
+    # Popular stocks to fetch news for
+    POPULAR_TICKERS = ["AAPL", "MSFT", "GOOGL", "TSLA", "NVDA", "AMZN"]
+    
+    import time
+    import re
+    
+    # Initialize headlines cache in session state
+    if "stock_headlines_cache" not in st.session_state:
+        st.session_state.stock_headlines_cache = {}
+    if "stock_headlines" not in st.session_state:
+        st.session_state.stock_headlines = None
+    if "headlines_fetch_time" not in st.session_state:
+        st.session_state.headlines_fetch_time = None
+    
+    # Use cached headlines first - only fetch if cache is older than 6 hours
+    all_headlines = []
+    
+    # Always try cache first - show immediately
+    if st.session_state.stock_headlines and len(st.session_state.stock_headlines) > 0:
+        all_headlines = st.session_state.stock_headlines
+    
+    # Also check individual ticker cache
+    if not all_headlines or len(all_headlines) == 0:
+        for ticker, cached_news in st.session_state.stock_headlines_cache.items():
+            if cached_news:
+                for headline in cached_news:
+                    headline['ticker'] = ticker
+                    is_duplicate = any(h.get('title', '').lower() == headline.get('title', '').lower() for h in all_headlines)
+                    if not is_duplicate:
+                        all_headlines.append(headline)
+        if all_headlines:
+            st.session_state.stock_headlines = all_headlines[:15]
+            st.session_state.headlines_fetch_time = time.time()
+    
+    # Only fetch if cache is empty or very old (6 hours) - fetch in background
+    should_fetch = (
+        (not all_headlines or len(all_headlines) == 0) or
+        st.session_state.headlines_fetch_time is None or
+        (time.time() - st.session_state.headlines_fetch_time) > 21600  # 6 hours
+    )
+    
+    # Fetch in background if needed (non-blocking)
+    if should_fetch:
+        # Use NewsSentimentAgent to fetch news (non-blocking)
+        if st.session_state.news_sentiment_agent is None:
+            try:
+                st.session_state.news_sentiment_agent = NewsSentimentAgent()
+            except Exception:
+                pass
+        
+        if st.session_state.news_sentiment_agent:
+            # Fetch from fewer tickers for speed
+            for ticker in POPULAR_TICKERS[:3]:  # Only 3 tickers
+                try:
+                    # Skip if already in cache
+                    if ticker in st.session_state.stock_headlines_cache:
+                        continue
+                    
+                    # Fetch fresh news (non-blocking - will update cache for next time)
+                    articles = st.session_state.news_sentiment_agent.fetch_news(ticker, max_articles=2)
+                    if articles and isinstance(articles, list):
+                        st.session_state.stock_headlines_cache[ticker] = articles
+                except Exception:
+                    continue
+    
+    if all_headlines and len(all_headlines) > 0:
+        # Initialize carousel index and auto-slide timing
+        if "headlines_carousel_index" not in st.session_state:
+            st.session_state.headlines_carousel_index = 0
+        if "headlines_last_slide_time" not in st.session_state:
+            st.session_state.headlines_last_slide_time = time.time()
+        
+        # Auto-advance every 3 seconds (faster)
+        slide_interval = 3
+        current_time = time.time()
+        if current_time - st.session_state.headlines_last_slide_time > slide_interval:
+            st.session_state.headlines_carousel_index = (st.session_state.headlines_carousel_index + 1) % len(all_headlines)
+            st.session_state.headlines_last_slide_time = current_time
+            st.rerun()
+        
+        current_idx = st.session_state.headlines_carousel_index % len(all_headlines)
+        headline = all_headlines[current_idx]
+        
+        link = headline.get('link', '')
+        title = headline.get('title', 'No title')
+        ticker = headline.get('ticker', '')
+        summary = headline.get('summary', '')
+        
+        # Clean title and summary
+        title = re.sub(r'<[^>]+>', '', str(title)).strip()
+        summary = re.sub(r'<[^>]+>', '', str(summary)).strip()
+        
+        # Remove summary if it's the same as title or too similar
+        if summary:
+            # Check if summary is essentially the same as title (ignoring case and whitespace)
+            title_normalized = title.lower().strip()
+            summary_normalized = summary.lower().strip()
+            
+            # If summary is same as title or very similar (more than 80% match), don't show it
+            if summary_normalized == title_normalized or summary_normalized.startswith(title_normalized[:min(50, len(title_normalized))]):
+                summary = ""
+            # Truncate summary if it's too long
+            elif len(summary) > 200:
+                summary = summary[:197] + "..."
+        
+        # Only show summary if it's different from title and meaningful
+        if not summary or len(summary.strip()) < 10:
+            summary = ""  # Don't show empty or very short summaries
+        
+        # Build onclick handler
+        onclick_js = ""
+        if link:
+            safe_link = link.replace("'", "\\'").replace('"', '\\"')
+            onclick_js = f"window.open('{safe_link}', '_blank')"
+        
+        # Create attractive headline card with smooth animations
+        ticker_badge = f'<span style="background: linear-gradient(135deg, #5d5fef 0%, #4547d4 100%); color: white; padding: 0.25rem 0.6rem; border-radius: 6px; font-size: 0.65rem; font-weight: 600; box-shadow: 0 2px 4px rgba(93, 95, 239, 0.3);">{ticker}</span>' if ticker else ''
+        
+        card_html = f"""
+        <div id="news-card-{current_idx}" style="
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            padding: 1.2rem 1.5rem;
+            border-radius: 12px;
+            border: 1px solid #e8e9ea;
+            margin-bottom: 0.5rem;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            cursor: {'pointer' if link else 'default'};
+            animation: slideIn 0.5s ease-out;
+        " {'onclick="' + onclick_js + '"' if link else ''} 
+        onmouseover="this.style.transform='translateY(-2px) scale(1.01)'; this.style.boxShadow='0 8px 20px rgba(0,0,0,0.15)';" 
+        onmouseout="this.style.transform='translateY(0) scale(1)'; this.style.boxShadow='0 4px 12px rgba(0,0,0,0.1)';">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.8rem;">
+                <div style="font-size: 1rem; font-weight: 700; color: #1a1a1a; line-height: 1.4; flex: 1; letter-spacing: -0.01em;">{title}</div>
+                {'<div style="margin-left: 0.8rem; flex-shrink: 0;">' + ticker_badge + '</div>' if ticker else ''}
+            </div>
+            {'<div style="font-size: 0.875rem; color: #666; line-height: 1.6; margin-top: 0.6rem; opacity: 0.9;">' + summary + '</div>' if summary else ''}
+        </div>
+        
+        <style>
+        @keyframes slideIn {{
+            from {{
+                opacity: 0;
+                transform: translateX(20px);
+            }}
+            to {{
+                opacity: 1;
+                transform: translateX(0);
+            }}
+        }}
+        </style>
+        """
+        
+        st.markdown(card_html, unsafe_allow_html=True)
+        
+        # Navigation buttons and carousel indicators
+        col1, col2, col3 = st.columns([1, 2, 1])
+        
+        with col1:
+            if st.button("← Previous", key="prev_headline", use_container_width=True):
+                st.session_state.headlines_carousel_index = (st.session_state.headlines_carousel_index - 1) % len(all_headlines)
+                st.session_state.headlines_last_slide_time = time.time()
+                st.rerun()
+        
+        with col2:
+            # Enhanced carousel indicator dots with animation
+            dots_html = '<div style="text-align: center; margin-top: 0.8rem; display: flex; justify-content: center; align-items: center; gap: 0.5rem;">'
+            for i in range(len(all_headlines)):
+                if i == current_idx:
+                    dots_html += f'<span id="dot-{i}" style="width: 10px; height: 10px; border-radius: 50%; background: linear-gradient(135deg, #5d5fef 0%, #4547d4 100%); display: inline-block; box-shadow: 0 2px 4px rgba(93, 95, 239, 0.4); animation: pulse 2s ease-in-out infinite;"></span>'
+                else:
+                    dots_html += f'<span id="dot-{i}" style="width: 8px; height: 8px; border-radius: 50%; background: #ddd; display: inline-block; transition: all 0.3s ease; cursor: pointer;" onmouseover="this.style.background=\'#bbb\'; this.style.transform=\'scale(1.2)\';" onmouseout="this.style.background=\'#ddd\'; this.style.transform=\'scale(1)\';"></span>'
+            dots_html += '</div>'
+            
+            dots_animation = """
+            <style>
+            @keyframes pulse {
+                0%, 100% {
+                    transform: scale(1);
+                    opacity: 1;
+                }
+                50% {
+                    transform: scale(1.2);
+                    opacity: 0.8;
+                }
+            }
+            </style>
+            """
+            
+            st.markdown(dots_animation + dots_html, unsafe_allow_html=True)
+        
+        with col3:
+            if st.button("Next →", key="next_headline", use_container_width=True):
+                st.session_state.headlines_carousel_index = (st.session_state.headlines_carousel_index + 1) % len(all_headlines)
+                st.session_state.headlines_last_slide_time = time.time()
+                st.rerun()
+        
+        # Auto-refresh mechanism (faster interval)
+        if current_time - st.session_state.headlines_last_slide_time < slide_interval:
+            remaining_time = slide_interval - (current_time - st.session_state.headlines_last_slide_time)
+            auto_refresh_js = f"""
+            <script>
+            setTimeout(function() {{
+                window.location.reload();
+            }}, {int(remaining_time * 1000)});
+            </script>
+            """
+            st.markdown(auto_refresh_js, unsafe_allow_html=True)
+    else:
+        st.info("📰 Fetching latest news headlines... Please wait.")
+
+
 def render_market_view():
     """Render live market view grouped by sector"""
     st.markdown('<div class="main-header">Live Market</div>', unsafe_allow_html=True)
@@ -634,20 +855,68 @@ def render_market_view():
     all_market_stocks = get_all_market_stocks()
 
     if view_mode == "Popular":
-        # Show popular stocks
+        # Show popular stocks - limit to 15 to avoid rate limiting
         st.subheader(" Most Popular Stocks")
-        popular = get_popular_stocks(30)
+        popular = get_popular_stocks(15)  # Reduced from 30 to avoid rate limiting
 
-        with st.spinner("Fetching live prices..."):
-            live_prices = service.get_live_prices(popular)
+        # Initialize market data cache
+        if "market_prices_cache" not in st.session_state:
+            st.session_state.market_prices_cache = {}
+        if "market_prices_cache_time" not in st.session_state:
+            st.session_state.market_prices_cache_time = None
+        if "skip_market_refresh" not in st.session_state:
+            st.session_state.skip_market_refresh = False
+        
+        # Check if we should skip refresh (when navigating news)
+        skip_refresh = st.session_state.skip_market_refresh
+        st.session_state.skip_market_refresh = False  # Reset flag
+        
+        # Use cache first - only fetch if cache is empty or older than 10 minutes
+        import time
+        live_prices = st.session_state.market_prices_cache if st.session_state.market_prices_cache else {}
+        
+        # Only fetch if cache is empty or very old (10 minutes), AND we're not skipping refresh
+        should_refetch_market = (
+            not skip_refresh and
+            (not live_prices or len(live_prices) == 0 or
+            st.session_state.market_prices_cache_time is None or
+            (time.time() - st.session_state.market_prices_cache_time) > 600)  # 10 minutes
+        )
+        
+        if should_refetch_market:
+            # Fetch in background (non-blocking)
+            try:
+                live_prices = service.get_live_prices(popular)
+                # Cache the prices
+                st.session_state.market_prices_cache = live_prices
+                st.session_state.market_prices_cache_time = time.time()
+            except Exception as e:
+                # Use existing cache if fetch fails
+                live_prices = st.session_state.market_prices_cache if st.session_state.market_prices_cache else {}
 
         cols = st.columns(3)
         for idx, ticker in enumerate(popular):
             with cols[idx % 3]:
-                info = service.get_stock_info(ticker)
-                if info and info.get('current_price', 0) > 0:
+                # Use cached price if available, otherwise try to fetch
+                if ticker in live_prices and live_prices[ticker] > 0:
+                    # Create minimal info dict from cached price
                     from utils.market_data import get_stock_sector
                     sector = get_stock_sector(ticker)
+                    info = {
+                        'current_price': live_prices[ticker],
+                        'previous_close': live_prices[ticker],  # Approximate
+                        'company_name': ticker
+                    }
+                    render_stock_card_simple(ticker, sector, info)
+                else:
+                    # Show placeholder if no cached price (don't fetch to avoid loading)
+                    from utils.market_data import get_stock_sector
+                    sector = get_stock_sector(ticker)
+                    info = {
+                        'current_price': 0,
+                        'previous_close': 0,
+                        'company_name': ticker
+                    }
                     render_stock_card_simple(ticker, sector, info)
     else:
         # Show all sectors
@@ -2230,10 +2499,10 @@ def main():
 
         view = st.radio(
             "Navigate",
-            options=["market", "portfolio", "settings"],
-            format_func=lambda x: {"market": "Market", "portfolio": "Portfolio", "settings": "Settings"}[x],
+            options=["market", "portfolio", "news", "settings"],
+            format_func=lambda x: {"market": "Market", "portfolio": "Portfolio", "news": "News", "settings": "Settings"}[x],
             key="nav",
-            index=["market", "portfolio", "settings"].index(current_nav) if current_nav in ["market", "portfolio", "settings"] else 0
+            index=["market", "portfolio", "news", "settings"].index(current_nav) if current_nav in ["market", "portfolio", "news", "settings"] else 0
         )
 
         # Only update view_mode if navigation actually changed and we're not viewing stock details
@@ -2243,6 +2512,9 @@ def main():
                 st.session_state.selected_stock = None
             elif view == "portfolio":
                 st.session_state.view_mode = "portfolio"
+                st.session_state.selected_stock = None
+            elif view == "news":
+                st.session_state.view_mode = "news"
                 st.session_state.selected_stock = None
             st.rerun()
 
@@ -2265,6 +2537,8 @@ def main():
         render_stock_detail()
     elif st.session_state.view_mode == "portfolio" or view == "portfolio":
         render_portfolio_view()
+    elif st.session_state.view_mode == "news" or view == "news":
+        render_news_view()
     elif st.session_state.nav == "settings" or view == "settings":
         render_settings()
     elif st.session_state.view_mode == "market" or view == "market":

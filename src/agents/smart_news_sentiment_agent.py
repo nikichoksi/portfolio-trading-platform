@@ -4,6 +4,11 @@ Fetches and analyzes news articles for stock tickers using web scraping.
 """
 
 import os
+
+# Set environment variables BEFORE any imports to prevent torchvision issues
+os.environ.setdefault("TRANSFORMERS_NO_TORCHVISION", "1")
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 import logging
 import requests
 import re
@@ -49,11 +54,13 @@ except ImportError:
     logging.warning("NLTK not available. Install with: pip install nltk")
 
 try:
+    # Ensure env var is set before attempting import
+    os.environ["TRANSFORMERS_NO_TORCHVISION"] = "1"
     from transformers import pipeline
     TRANSFORMERS_AVAILABLE = True
-except ImportError:
+except (ImportError, RuntimeError, Exception) as e:
     TRANSFORMERS_AVAILABLE = False
-    logging.warning("Transformers not available. Install with: pip install transformers torch")
+    logging.warning(f"Transformers not available: {type(e).__name__}. Will use NLTK for sentiment analysis.")
 
 # Load environment variables
 load_dotenv()
