@@ -1,9 +1,4 @@
-"""
-Airflow DAG for AI Agent Portfolio Analysis.
-Runs portfolio analysis agents and stores results in Snowflake.
 
-Schedule: Daily at 6:00 PM ET (after portfolio snapshot)
-"""
 
 from datetime import datetime, timedelta
 from airflow import DAG

@@ -464,22 +464,25 @@ class SnowflakeWarehouse:
             metrics: Dictionary of calculated metrics
             recommendations: List of recommendations
         """
+        import json
+
         conn = self._get_connection()
         cursor = conn.cursor()
 
         try:
+            # Insert with TO_VARIANT instead of PARSE_JSON for better parameter binding
             cursor.execute("""
                 INSERT INTO agent_analysis
                 (analysis_date, agent_name, portfolio_tickers, analysis_type, metrics, recommendations)
                 VALUES (%(analysis_date)s, %(agent_name)s, %(portfolio_tickers)s, %(analysis_type)s,
-                        PARSE_JSON(%(metrics)s), PARSE_JSON(%(recommendations)s))
+                        TO_VARIANT(PARSE_JSON(%(metrics)s)), TO_VARIANT(PARSE_JSON(%(recommendations)s)))
             """, {
                 'analysis_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 'agent_name': agent_name,
                 'portfolio_tickers': portfolio_tickers,
                 'analysis_type': analysis_type,
-                'metrics': str(metrics),
-                'recommendations': str(recommendations)
+                'metrics': json.dumps(metrics),
+                'recommendations': json.dumps(recommendations)
             })
 
             conn.commit()
