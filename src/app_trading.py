@@ -5,6 +5,11 @@ Complete trading interface with market view, stock analytics, pattern detection,
 
 import streamlit as st
 import os
+
+# Set environment variables BEFORE any imports to prevent torchvision issues
+os.environ.setdefault("TRANSFORMERS_NO_TORCHVISION", "1")
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 from typing import List, Dict
 import plotly.graph_objects as go
 import plotly.express as px
@@ -28,6 +33,7 @@ from agents.scenario_simulator_agent import ScenarioSimulatorAgent
 from agents.rebalancing_strategist_agent import RebalancingStrategistAgent
 from agents.comparative_analytics_agent import ComparativeAnalyticsAgent
 from agents.temporal_intelligence_agent import TemporalIntelligenceAgent
+from agents.smart_news_sentiment_agent import NewsSentimentAgent
 
 # Load environment variables
 load_dotenv()
@@ -506,6 +512,8 @@ def init_session_state():
         st.session_state.comparative_analytics_agent = None
     if "temporal_intelligence_agent" not in st.session_state:
         st.session_state.temporal_intelligence_agent = None
+    if "news_sentiment_agent" not in st.session_state:
+        st.session_state.news_sentiment_agent = None
 
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
@@ -591,6 +599,222 @@ def create_candlestick_chart_with_patterns(df: pd.DataFrame, ticker: str, patter
     return fig
 
 
+def render_news_view():
+    """Render news headlines view"""
+    st.markdown('<div class="main-header">📰 News Headlines</div>', unsafe_allow_html=True)
+
+    # Popular stocks to fetch news for
+    POPULAR_TICKERS = ["AAPL", "MSFT", "GOOGL", "TSLA", "NVDA", "AMZN"]
+    
+    import time
+    import re
+    
+    # Initialize headlines cache in session state
+    if "stock_headlines_cache" not in st.session_state:
+        st.session_state.stock_headlines_cache = {}
+    if "stock_headlines" not in st.session_state:
+        st.session_state.stock_headlines = None
+    if "headlines_fetch_time" not in st.session_state:
+        st.session_state.headlines_fetch_time = None
+    
+    # Use cached headlines first - only fetch if cache is older than 6 hours
+    all_headlines = []
+    
+    # Always try cache first - show immediately
+    if st.session_state.stock_headlines and len(st.session_state.stock_headlines) > 0:
+        all_headlines = st.session_state.stock_headlines
+    
+    # Also check individual ticker cache
+    if not all_headlines or len(all_headlines) == 0:
+        for ticker, cached_news in st.session_state.stock_headlines_cache.items():
+            if cached_news:
+                for headline in cached_news:
+                    headline['ticker'] = ticker
+                    is_duplicate = any(h.get('title', '').lower() == headline.get('title', '').lower() for h in all_headlines)
+                    if not is_duplicate:
+                        all_headlines.append(headline)
+        if all_headlines:
+            st.session_state.stock_headlines = all_headlines[:15]
+            st.session_state.headlines_fetch_time = time.time()
+    
+    # Only fetch if cache is empty or very old (6 hours) - fetch in background
+    should_fetch = (
+        (not all_headlines or len(all_headlines) == 0) or
+        st.session_state.headlines_fetch_time is None or
+        (time.time() - st.session_state.headlines_fetch_time) > 21600  # 6 hours
+    )
+    
+    # Fetch in background if needed (non-blocking)
+    if should_fetch:
+        # Use NewsSentimentAgent to fetch news (non-blocking)
+        if st.session_state.news_sentiment_agent is None:
+            try:
+                st.session_state.news_sentiment_agent = NewsSentimentAgent()
+            except Exception:
+                pass
+        
+        if st.session_state.news_sentiment_agent:
+            # Fetch from fewer tickers for speed
+            for ticker in POPULAR_TICKERS[:3]:  # Only 3 tickers
+                try:
+                    # Skip if already in cache
+                    if ticker in st.session_state.stock_headlines_cache:
+                        continue
+                    
+                    # Fetch fresh news (non-blocking - will update cache for next time)
+                    articles = st.session_state.news_sentiment_agent.fetch_news(ticker, max_articles=2)
+                    if articles and isinstance(articles, list):
+                        st.session_state.stock_headlines_cache[ticker] = articles
+                except Exception:
+                    continue
+    
+    if all_headlines and len(all_headlines) > 0:
+        # Initialize carousel index and auto-slide timing
+        if "headlines_carousel_index" not in st.session_state:
+            st.session_state.headlines_carousel_index = 0
+        if "headlines_last_slide_time" not in st.session_state:
+            st.session_state.headlines_last_slide_time = time.time()
+        
+        # Auto-advance every 3 seconds (faster)
+        slide_interval = 3
+        current_time = time.time()
+        if current_time - st.session_state.headlines_last_slide_time > slide_interval:
+            st.session_state.headlines_carousel_index = (st.session_state.headlines_carousel_index + 1) % len(all_headlines)
+            st.session_state.headlines_last_slide_time = current_time
+            st.rerun()
+        
+        current_idx = st.session_state.headlines_carousel_index % len(all_headlines)
+        headline = all_headlines[current_idx]
+        
+        link = headline.get('link', '')
+        title = headline.get('title', 'No title')
+        ticker = headline.get('ticker', '')
+        summary = headline.get('summary', '')
+        
+        # Clean title and summary
+        title = re.sub(r'<[^>]+>', '', str(title)).strip()
+        summary = re.sub(r'<[^>]+>', '', str(summary)).strip()
+        
+        # Remove summary if it's the same as title or too similar
+        if summary:
+            # Check if summary is essentially the same as title (ignoring case and whitespace)
+            title_normalized = title.lower().strip()
+            summary_normalized = summary.lower().strip()
+            
+            # If summary is same as title or very similar (more than 80% match), don't show it
+            if summary_normalized == title_normalized or summary_normalized.startswith(title_normalized[:min(50, len(title_normalized))]):
+                summary = ""
+            # Truncate summary if it's too long
+            elif len(summary) > 200:
+                summary = summary[:197] + "..."
+        
+        # Only show summary if it's different from title and meaningful
+        if not summary or len(summary.strip()) < 10:
+            summary = ""  # Don't show empty or very short summaries
+        
+        # Build onclick handler
+        onclick_js = ""
+        if link:
+            safe_link = link.replace("'", "\\'").replace('"', '\\"')
+            onclick_js = f"window.open('{safe_link}', '_blank')"
+        
+        # Create attractive headline card with smooth animations
+        ticker_badge = f'<span style="background: linear-gradient(135deg, #5d5fef 0%, #4547d4 100%); color: white; padding: 0.25rem 0.6rem; border-radius: 6px; font-size: 0.65rem; font-weight: 600; box-shadow: 0 2px 4px rgba(93, 95, 239, 0.3);">{ticker}</span>' if ticker else ''
+        
+        card_html = f"""
+        <div id="news-card-{current_idx}" style="
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            padding: 1.2rem 1.5rem;
+            border-radius: 12px;
+            border: 1px solid #e8e9ea;
+            margin-bottom: 0.5rem;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            cursor: {'pointer' if link else 'default'};
+            animation: slideIn 0.5s ease-out;
+        " {'onclick="' + onclick_js + '"' if link else ''} 
+        onmouseover="this.style.transform='translateY(-2px) scale(1.01)'; this.style.boxShadow='0 8px 20px rgba(0,0,0,0.15)';" 
+        onmouseout="this.style.transform='translateY(0) scale(1)'; this.style.boxShadow='0 4px 12px rgba(0,0,0,0.1)';">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.8rem;">
+                <div style="font-size: 1rem; font-weight: 700; color: #1a1a1a; line-height: 1.4; flex: 1; letter-spacing: -0.01em;">{title}</div>
+                {'<div style="margin-left: 0.8rem; flex-shrink: 0;">' + ticker_badge + '</div>' if ticker else ''}
+            </div>
+            {'<div style="font-size: 0.875rem; color: #666; line-height: 1.6; margin-top: 0.6rem; opacity: 0.9;">' + summary + '</div>' if summary else ''}
+        </div>
+        
+        <style>
+        @keyframes slideIn {{
+            from {{
+                opacity: 0;
+                transform: translateX(20px);
+            }}
+            to {{
+                opacity: 1;
+                transform: translateX(0);
+            }}
+        }}
+        </style>
+        """
+        
+        st.markdown(card_html, unsafe_allow_html=True)
+        
+        # Navigation buttons and carousel indicators
+        col1, col2, col3 = st.columns([1, 2, 1])
+        
+        with col1:
+            if st.button("← Previous", key="prev_headline", use_container_width=True):
+                st.session_state.headlines_carousel_index = (st.session_state.headlines_carousel_index - 1) % len(all_headlines)
+                st.session_state.headlines_last_slide_time = time.time()
+                st.rerun()
+        
+        with col2:
+            # Enhanced carousel indicator dots with animation
+            dots_html = '<div style="text-align: center; margin-top: 0.8rem; display: flex; justify-content: center; align-items: center; gap: 0.5rem;">'
+            for i in range(len(all_headlines)):
+                if i == current_idx:
+                    dots_html += f'<span id="dot-{i}" style="width: 10px; height: 10px; border-radius: 50%; background: linear-gradient(135deg, #5d5fef 0%, #4547d4 100%); display: inline-block; box-shadow: 0 2px 4px rgba(93, 95, 239, 0.4); animation: pulse 2s ease-in-out infinite;"></span>'
+                else:
+                    dots_html += f'<span id="dot-{i}" style="width: 8px; height: 8px; border-radius: 50%; background: #ddd; display: inline-block; transition: all 0.3s ease; cursor: pointer;" onmouseover="this.style.background=\'#bbb\'; this.style.transform=\'scale(1.2)\';" onmouseout="this.style.background=\'#ddd\'; this.style.transform=\'scale(1)\';"></span>'
+            dots_html += '</div>'
+            
+            dots_animation = """
+            <style>
+            @keyframes pulse {
+                0%, 100% {
+                    transform: scale(1);
+                    opacity: 1;
+                }
+                50% {
+                    transform: scale(1.2);
+                    opacity: 0.8;
+                }
+            }
+            </style>
+            """
+            
+            st.markdown(dots_animation + dots_html, unsafe_allow_html=True)
+        
+        with col3:
+            if st.button("Next →", key="next_headline", use_container_width=True):
+                st.session_state.headlines_carousel_index = (st.session_state.headlines_carousel_index + 1) % len(all_headlines)
+                st.session_state.headlines_last_slide_time = time.time()
+                st.rerun()
+        
+        # Auto-refresh mechanism (faster interval)
+        if current_time - st.session_state.headlines_last_slide_time < slide_interval:
+            remaining_time = slide_interval - (current_time - st.session_state.headlines_last_slide_time)
+            auto_refresh_js = f"""
+            <script>
+            setTimeout(function() {{
+                window.location.reload();
+            }}, {int(remaining_time * 1000)});
+            </script>
+            """
+            st.markdown(auto_refresh_js, unsafe_allow_html=True)
+    else:
+        st.info("📰 Fetching latest news headlines... Please wait.")
+
+
 def render_market_view():
     """Render live market view grouped by sector"""
     st.markdown('<div class="main-header">Live Market</div>', unsafe_allow_html=True)
@@ -631,20 +855,68 @@ def render_market_view():
     all_market_stocks = get_all_market_stocks()
 
     if view_mode == "Popular":
-        # Show popular stocks
+        # Show popular stocks - limit to 15 to avoid rate limiting
         st.subheader(" Most Popular Stocks")
-        popular = get_popular_stocks(30)
+        popular = get_popular_stocks(15)  # Reduced from 30 to avoid rate limiting
 
-        with st.spinner("Fetching live prices..."):
-            live_prices = service.get_live_prices(popular)
+        # Initialize market data cache
+        if "market_prices_cache" not in st.session_state:
+            st.session_state.market_prices_cache = {}
+        if "market_prices_cache_time" not in st.session_state:
+            st.session_state.market_prices_cache_time = None
+        if "skip_market_refresh" not in st.session_state:
+            st.session_state.skip_market_refresh = False
+        
+        # Check if we should skip refresh (when navigating news)
+        skip_refresh = st.session_state.skip_market_refresh
+        st.session_state.skip_market_refresh = False  # Reset flag
+        
+        # Use cache first - only fetch if cache is empty or older than 10 minutes
+        import time
+        live_prices = st.session_state.market_prices_cache if st.session_state.market_prices_cache else {}
+        
+        # Only fetch if cache is empty or very old (10 minutes), AND we're not skipping refresh
+        should_refetch_market = (
+            not skip_refresh and
+            (not live_prices or len(live_prices) == 0 or
+            st.session_state.market_prices_cache_time is None or
+            (time.time() - st.session_state.market_prices_cache_time) > 600)  # 10 minutes
+        )
+        
+        if should_refetch_market:
+            # Fetch in background (non-blocking)
+            try:
+                live_prices = service.get_live_prices(popular)
+                # Cache the prices
+                st.session_state.market_prices_cache = live_prices
+                st.session_state.market_prices_cache_time = time.time()
+            except Exception as e:
+                # Use existing cache if fetch fails
+                live_prices = st.session_state.market_prices_cache if st.session_state.market_prices_cache else {}
 
         cols = st.columns(3)
         for idx, ticker in enumerate(popular):
             with cols[idx % 3]:
-                info = service.get_stock_info(ticker)
-                if info and info.get('current_price', 0) > 0:
+                # Use cached price if available, otherwise try to fetch
+                if ticker in live_prices and live_prices[ticker] > 0:
+                    # Create minimal info dict from cached price
                     from utils.market_data import get_stock_sector
                     sector = get_stock_sector(ticker)
+                    info = {
+                        'current_price': live_prices[ticker],
+                        'previous_close': live_prices[ticker],  # Approximate
+                        'company_name': ticker
+                    }
+                    render_stock_card_simple(ticker, sector, info)
+                else:
+                    # Show placeholder if no cached price (don't fetch to avoid loading)
+                    from utils.market_data import get_stock_sector
+                    sector = get_stock_sector(ticker)
+                    info = {
+                        'current_price': 0,
+                        'previous_close': 0,
+                        'company_name': ticker
+                    }
                     render_stock_card_simple(ticker, sector, info)
     else:
         # Show all sectors
@@ -778,7 +1050,7 @@ def render_stock_detail():
     st.divider()
 
     # Main content area
-    tab1, tab2, tab3 = st.tabs(["Chart", "Trade", "Orders"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Chart", "Trade", "Orders", "News Sentiment"])
 
     # TAB 1: CHART ANALYSIS
     with tab1:
@@ -1045,6 +1317,333 @@ def render_stock_detail():
         else:
             st.info("No transaction history")
 
+    # TAB 4: NEWS SENTIMENT
+    with tab4:
+        st.subheader("News Sentiment Analysis")
+        st.caption("Analyze news sentiment and risk for this stock")
+
+        # Initialize agent
+        if st.session_state.news_sentiment_agent is None:
+            try:
+                st.session_state.news_sentiment_agent = NewsSentimentAgent()
+            except Exception as e:
+                st.error(f"Could not initialize News Sentiment Agent: {str(e)}")
+                st.info("Make sure required dependencies (nltk, yfinance, etc.) are installed")
+                return
+
+        # Analysis options
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            max_articles = st.number_input(
+                "Max Articles:",
+                min_value=5,
+                max_value=20,
+                value=10,
+                step=5,
+                key="stock_detail_news_max_articles"
+            )
+
+        with col2:
+            save_to_json = st.checkbox("Save results to JSON", value=True, key="stock_detail_news_save_json")
+
+        # Analyze button
+        if st.button("Analyze News Sentiment", use_container_width=True, type="primary", key="stock_detail_analyze_news_btn"):
+            # Capture ticker in local scope to avoid UnboundLocalError
+            current_ticker = ticker
+            with st.spinner(f"Analyzing news sentiment for {current_ticker}..."):
+                try:
+                    result = st.session_state.news_sentiment_agent.run(
+                        ticker=current_ticker,
+                        max_articles=max_articles,
+                        save_to_json=save_to_json
+                    )
+
+                    # Display results
+                    st.divider()
+                    st.markdown("### Analysis Results")
+
+                    # Key metrics
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        risk_level = result.get('risk_level', 'N/A')
+                        st.metric("Risk Level", risk_level)
+
+                    with col2:
+                        profit_potential = result.get('profit_potential', 'N/A')
+                        st.metric("Profit Potential", f"{profit_potential}%")
+
+                    with col3:
+                        avg_sentiment = result.get('avg_sentiment', 'N/A')
+                        if isinstance(avg_sentiment, (int, float)):
+                            sentiment_display = f"{avg_sentiment:.3f}"
+                        else:
+                            sentiment_display = str(avg_sentiment)
+                        st.metric("Avg Sentiment", sentiment_display)
+
+                    with col4:
+                        event_type = result.get('event', 'N/A')
+                        st.metric("Event Type", event_type.replace('_', ' ').title())
+
+                    # Growth metrics
+                    st.divider()
+                    col5, col6 = st.columns(2)
+                    
+                    with col5:
+                        growth_7d = result.get('avg_growth_7d')
+                        if growth_7d is not None:
+                            st.metric("Avg 7-Day Growth", f"{growth_7d:.2f}%")
+                        else:
+                            st.metric("Avg 7-Day Growth", "N/A")
+
+                    with col6:
+                        growth_30d = result.get('avg_growth_30d')
+                        if growth_30d is not None:
+                            st.metric("Avg 30-Day Growth", f"{growth_30d:.2f}%")
+                        else:
+                            st.metric("Avg 30-Day Growth", "N/A")
+
+                    # Insight
+                    st.divider()
+                    if result.get('insight'):
+                        st.markdown("### Insight")
+                        # Check if GPT is available (OpenAI API key is set)
+                        import os
+                        if os.getenv('OPENAI_API_KEY'):
+                            st.caption("💡 AI-generated insight based on news sentiment, historical data, and market analysis")
+                        st.info(result['insight'])
+
+                    # Sentiment breakdown - Written insights
+                    if result.get('sentiment_breakdown'):
+                        st.divider()
+                        st.markdown("### Sentiment Analysis Insights")
+                        
+                        breakdown = result['sentiment_breakdown']
+                        avg_sentiment = result.get('avg_sentiment', 0.0)
+                        total_articles = breakdown.get('total', 0)
+                        
+                        # Metrics
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric(
+                                "Positive",
+                                f"{breakdown.get('positive', 0)}",
+                                f"{breakdown.get('positive_percentage', 0):.1f}%"
+                            )
+                        with col2:
+                            st.metric(
+                                "Neutral",
+                                f"{breakdown.get('neutral', 0)}",
+                                f"{breakdown.get('neutral_percentage', 0):.1f}%"
+                            )
+                        with col3:
+                            st.metric(
+                                "Negative",
+                                f"{breakdown.get('negative', 0)}",
+                                f"{breakdown.get('negative_percentage', 0):.1f}%"
+                            )
+                        
+                        # Simple insight based on news
+                        if total_articles > 0:
+                            sentiment_desc = ""
+                            if avg_sentiment > 0.3:
+                                sentiment_desc = f"**positive news** about {current_ticker}. The market is generally optimistic."
+                            elif avg_sentiment < -0.3:
+                                sentiment_desc = f"**negative news** about {current_ticker}. The market is showing concerns."
+                            else:
+                                sentiment_desc = f"**mixed news** about {current_ticker}. The sentiment is neutral."
+                            
+                            st.info(f"""
+                            📰 **News Analysis**: We analyzed {total_articles} recent news articles about {current_ticker}. 
+                            The current news sentiment is {sentiment_desc}
+                            
+                            - {breakdown.get('positive', 0)} positive articles ({breakdown.get('positive_percentage', 0):.1f}%)
+                            - {breakdown.get('neutral', 0)} neutral articles ({breakdown.get('neutral_percentage', 0):.1f}%)
+                            - {breakdown.get('negative', 0)} negative articles ({breakdown.get('negative_percentage', 0):.1f}%)
+                            """)
+
+                        # Event breakdown - Simple description
+                        if result.get('event_breakdown'):
+                            st.divider()
+                            st.markdown("### What's Happening")
+                            
+                            event_breakdown = result['event_breakdown']
+                            most_common_event = result.get('event', 'general_news')
+                            event_display = most_common_event.replace('_', ' ').title()
+                            
+                            # Create simple description based on event type
+                            event_description = {
+                                'product_launch': f"**New product launch**: According to recent news, {current_ticker} is launching new products or services.",
+                                'earnings_report': f"**Earnings report**: Recent news shows {current_ticker} has released earnings or financial results.",
+                                'acquisition': f"**Acquisition or merger**: News indicates {current_ticker} is involved in an acquisition or merger.",
+                                'partnership': f"**Partnership announcement**: Recent news shows {current_ticker} has formed new partnerships or collaborations.",
+                                'negative_event': f"**Negative developments**: Recent news reveals concerns, delays, or negative events for {current_ticker}.",
+                                'general_news': f"**General news**: Recent news coverage about {current_ticker} and market developments."
+                            }
+                            
+                            description = event_description.get(most_common_event, f"**{event_display}**: Recent news about {current_ticker}.")
+                            
+                            st.markdown(description)
+                            
+                            # Show event breakdown if multiple events
+                            if len(event_breakdown) > 1:
+                                st.markdown("**Detected Events:**")
+                                for event_type, count in sorted(event_breakdown.items(), key=lambda x: x[1], reverse=True):
+                                    if event_type != most_common_event:
+                                        event_name = event_type.replace('_', ' ').title()
+                                        st.markdown(f"- {event_name}: {count} article(s)")
+
+                    # Historical growth insights - Simple prediction
+                    avg_growth_7d = result.get('avg_growth_7d')
+                    avg_growth_30d = result.get('avg_growth_30d')
+                    event_type = result.get('event', 'similar events')
+                    event_type_display = event_type.replace('_', ' ').title()
+                    
+                    if avg_growth_7d is not None or avg_growth_30d is not None:
+                        st.divider()
+                        st.markdown("### Growth Prediction")
+                        
+                        # Build historical context message
+                        historical_context = ""
+                        if event_type == 'product_launch':
+                            historical_context = f"According to historical data, when {current_ticker} launched new products in the past,"
+                        elif event_type == 'earnings_report':
+                            historical_context = f"According to historical data, when {current_ticker} reported earnings in the past,"
+                        elif event_type == 'acquisition':
+                            historical_context = f"According to historical data, when {current_ticker} made acquisitions in the past,"
+                        elif event_type == 'partnership':
+                            historical_context = f"According to historical data, when {current_ticker} formed partnerships in the past,"
+                        elif event_type == 'negative_event':
+                            historical_context = f"According to historical data, when {current_ticker} faced similar negative events in the past,"
+                        else:
+                            historical_context = f"According to historical data, when {current_ticker} had similar events in the past,"
+                        
+                        # Build prediction message
+                        prediction_parts = []
+                        
+                        if avg_growth_7d is not None:
+                            if avg_growth_7d > 0:
+                                prediction_parts.append(f"the stock price increased by an average of **{avg_growth_7d:.2f}%** within 7 days")
+                            else:
+                                prediction_parts.append(f"the stock price decreased by an average of **{abs(avg_growth_7d):.2f}%** within 7 days")
+                        
+                        if avg_growth_30d is not None:
+                            if avg_growth_30d > 0:
+                                prediction_parts.append(f"and by **{avg_growth_30d:.2f}%** over 30 days")
+                            else:
+                                prediction_parts.append(f"and by **{abs(avg_growth_30d):.2f}%** over 30 days")
+                        
+                        if prediction_parts:
+                            historical_message = f"{historical_context} {', '.join(prediction_parts)}."
+                            st.info(f"📊 **Historical Context**: {historical_message}")
+                        
+                        # Current prediction
+                        st.divider()
+                        st.markdown("### Investment Outlook")
+                        
+                        prediction_text = f"""
+                        Based on the current news about **{event_type_display}** and historical performance, 
+                        if you buy {current_ticker} stock now, you can expect:
+                        """
+                        
+                        if avg_growth_7d is not None:
+                            if avg_growth_7d > 0:
+                                prediction_text += f"\n- **{avg_growth_7d:.2f}% growth** in the next 7 days"
+                            else:
+                                prediction_text += f"\n- **{abs(avg_growth_7d):.2f}% decline** in the next 7 days"
+                        
+                        if avg_growth_30d is not None:
+                            if avg_growth_30d > 0:
+                                prediction_text += f"\n- **{avg_growth_30d:.2f}% growth** over the next 30 days"
+                            else:
+                                prediction_text += f"\n- **{abs(avg_growth_30d):.2f}% decline** over the next 30 days"
+                        
+                        if avg_growth_7d is None and avg_growth_30d is None:
+                            prediction_text += "\n- **Insufficient historical data** to make a reliable prediction"
+                        
+                        prediction_text += "\n\n*Note: Past performance doesn't guarantee future results. Market conditions can change.*"
+                        
+                        if avg_growth_7d is not None and avg_growth_7d > 0:
+                            st.success(prediction_text)
+                        elif avg_growth_7d is not None and avg_growth_7d < 0:
+                            st.warning(prediction_text)
+                        else:
+                            st.info(prediction_text)
+                    else:
+                        st.divider()
+                        st.markdown("### Growth Prediction")
+                        st.info(f"📊 **Historical Data**: We don't have enough historical data to predict growth for {current_ticker} based on similar **{event_type_display}** events.")
+
+                    # Risk/Profit insights - Detailed explanation
+                    if result.get('risk_level') and result.get('profit_potential'):
+                        st.divider()
+                        st.markdown("### Risk & Profit Analysis")
+                        
+                        risk_level = result.get('risk_level')
+                        profit_potential = result.get('profit_potential')
+                        avg_sentiment = result.get('avg_sentiment', 0.0)
+                        avg_growth_7d = result.get('avg_growth_7d', 0.0) if result.get('avg_growth_7d') is not None else 0.0
+                        
+                        # Risk level color coding
+                        risk_colors = {
+                            "Low": "🟢",
+                            "Medium": "🟡",
+                            "High": "🟠",
+                            "Very High": "🔴"
+                        }
+                        risk_icon = risk_colors.get(risk_level, "⚪")
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.metric(
+                                "Risk Level",
+                                f"{risk_icon} {risk_level}",
+                                help="Risk level based on sentiment and historical growth"
+                            )
+                        with col2:
+                            st.metric(
+                                "Profit Potential",
+                                f"{profit_potential}%",
+                                help="Potential profit score (0-100%)"
+                            )
+                        
+                        # Simple risk assessment
+                        risk_assessment = ""
+                        if risk_level == "Low":
+                            risk_assessment = f"🟢 **Low Risk Opportunity**: Based on the positive news and historical performance, {current_ticker} presents a **low-risk investment opportunity** with **{profit_potential}% profit potential**. This could be a good time to invest."
+                        elif risk_level == "Medium":
+                            risk_assessment = f"🟡 **Medium Risk**: Based on the current news and historical data, {current_ticker} shows **moderate risk** with **{profit_potential}% profit potential**. Consider your risk tolerance before investing."
+                        elif risk_level == "High":
+                            risk_assessment = f"🟠 **High Risk**: Based on the current news and historical performance, {current_ticker} shows **high risk** with **{profit_potential}% profit potential**. Exercise caution and consider waiting for better conditions."
+                        else:
+                            risk_assessment = f"🔴 **Very High Risk**: Based on the negative news and historical data, {current_ticker} shows **very high risk** with **{profit_potential}% profit potential**. Consider avoiding this investment or wait for more positive developments."
+                        
+                        st.markdown(risk_assessment)
+
+                    # Latest headlines - TICKER-CENTRIC ONLY
+                    if result.get('latest_headlines'):
+                        st.divider()
+                        st.markdown("### Latest Headlines")
+                        st.caption(f"Showing ticker-specific news for {current_ticker}")
+                        
+                        for idx, headline in enumerate(result['latest_headlines'][:5], 1):
+                            with st.expander(f"{idx}. {headline.get('title', 'N/A')}"):
+                                st.markdown(f"**Link:** [{headline.get('link', 'N/A')}]({headline.get('link', '#')})")
+
+                    # Saved file location
+                    if result.get('saved_to'):
+                        st.divider()
+                        st.success(f"Results saved to: {result['saved_to']}")
+
+                    # Error handling
+                    if result.get('error'):
+                        st.warning(f"Warning: {result['error']}")
+
+                except Exception as e:
+                    st.error(f"Error analyzing news sentiment: {str(e)}")
+                    st.exception(e)
+
 
 def render_portfolio_view():
     """Render portfolio overview with AI assistant"""
@@ -1069,15 +1668,16 @@ def render_portfolio_view():
 
     st.divider()
 
-    # Tabs for holdings and all 6 AI agents
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    # Tabs for holdings and all 7 AI agents
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "Holdings",
         "Portfolio Insight Agent",
         "Risk Profiler",
         "Scenario Simulator",
         "Rebalancing Strategist",
         "Comparative Analytics",
-        "Temporal Intelligence"
+        "Temporal Intelligence",
+        "News Sentiment Agent"
     ])
 
     with tab1:
@@ -1478,6 +2078,412 @@ Question: {user_question}"""
         else:
             st.info("Start trading to build your portfolio first!")
 
+    # TAB 8: News Sentiment Agent
+    with tab8:
+        st.subheader("News Sentiment Agent")
+        st.caption("Analyze news sentiment and risk for individual stocks")
+
+        # Initialize agent
+        if st.session_state.news_sentiment_agent is None:
+            try:
+                st.session_state.news_sentiment_agent = NewsSentimentAgent()
+            except Exception as e:
+                st.error(f"Could not initialize News Sentiment Agent: {str(e)}")
+                st.info("Make sure required dependencies (nltk, yfinance, etc.) are installed")
+                return
+
+        # Ticker input
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            ticker_input = st.text_input(
+                "Enter Ticker Symbol:",
+                placeholder="e.g., AAPL, MSFT, GOOGL",
+                key="news_sentiment_ticker",
+                value=st.session_state.selected_stock if st.session_state.selected_stock else ""
+            ).upper().strip()
+
+        with col2:
+            max_articles = st.number_input(
+                "Max Articles:",
+                min_value=5,
+                max_value=20,
+                value=10,
+                step=5,
+                key="news_max_articles"
+            )
+
+        # Options
+        col3, col4 = st.columns(2)
+        with col3:
+            save_to_json = st.checkbox("Save results to JSON", value=True, key="news_save_json")
+        with col4:
+            analyze_portfolio_stocks = st.checkbox("Analyze all portfolio stocks", value=False, key="analyze_portfolio_stocks")
+
+        # Analyze button
+        if st.button("Analyze News Sentiment", use_container_width=True, type="primary", key="analyze_news_btn"):
+            if ticker_input:
+                with st.spinner(f"Analyzing news sentiment for {ticker_input}..."):
+                    try:
+                        result = st.session_state.news_sentiment_agent.run(
+                            ticker=ticker_input,
+                            max_articles=max_articles,
+                            save_to_json=save_to_json
+                        )
+
+                        # Display results
+                        st.divider()
+                        st.markdown("### Analysis Results")
+
+                        # Key metrics
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        with col1:
+                            # Risk level with color
+                            risk_level = result.get('risk_level', 'N/A')
+                            st.metric("Risk Level", risk_level)
+
+                        with col2:
+                            profit_potential = result.get('profit_potential', 'N/A')
+                            st.metric("Profit Potential", f"{profit_potential}%")
+
+                        with col3:
+                            avg_sentiment = result.get('avg_sentiment', 'N/A')
+                            if isinstance(avg_sentiment, (int, float)):
+                                sentiment_display = f"{avg_sentiment:.3f}"
+                            else:
+                                sentiment_display = str(avg_sentiment)
+                            st.metric("Avg Sentiment", sentiment_display)
+
+                        with col4:
+                            event_type = result.get('event', 'N/A')
+                            st.metric("Event Type", event_type.replace('_', ' ').title())
+
+                        # Growth metrics
+                        st.divider()
+                        col5, col6 = st.columns(2)
+                        
+                        with col5:
+                            growth_7d = result.get('avg_growth_7d')
+                            if growth_7d is not None:
+                                st.metric("Avg 7-Day Growth", f"{growth_7d:.2f}%")
+                            else:
+                                st.metric("Avg 7-Day Growth", "N/A")
+
+                        with col6:
+                            growth_30d = result.get('avg_growth_30d')
+                            if growth_30d is not None:
+                                st.metric("Avg 30-Day Growth", f"{growth_30d:.2f}%")
+                            else:
+                                st.metric("Avg 30-Day Growth", "N/A")
+
+                        # Insight
+                        st.divider()
+                        if result.get('insight'):
+                            st.markdown("### Insight")
+                            # Check if GPT is available (OpenAI API key is set)
+                            import os
+                            if os.getenv('OPENAI_API_KEY'):
+                                st.caption("💡 AI-generated insight based on news sentiment, historical data, and market analysis")
+                            st.info(result['insight'])
+
+                        # Sentiment breakdown - Written insights
+                        if result.get('sentiment_breakdown'):
+                            st.divider()
+                            st.markdown("### Sentiment Analysis Insights")
+                            
+                            breakdown = result['sentiment_breakdown']
+                            avg_sentiment = result.get('avg_sentiment', 0.0)
+                            total_articles = breakdown.get('total', 0)
+                            
+                            # Metrics
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric(
+                                    "Positive",
+                                    f"{breakdown.get('positive', 0)}",
+                                    f"{breakdown.get('positive_percentage', 0):.1f}%"
+                                )
+                            with col2:
+                                st.metric(
+                                    "Neutral",
+                                    f"{breakdown.get('neutral', 0)}",
+                                    f"{breakdown.get('neutral_percentage', 0):.1f}%"
+                                )
+                            with col3:
+                                st.metric(
+                                    "Negative",
+                                    f"{breakdown.get('negative', 0)}",
+                                    f"{breakdown.get('negative_percentage', 0):.1f}%"
+                                )
+                            
+                            # Simple insight based on news
+                            if total_articles > 0:
+                                sentiment_desc = ""
+                                if avg_sentiment > 0.3:
+                                    sentiment_desc = f"**positive news** about {ticker_input}. The market is generally optimistic."
+                                elif avg_sentiment < -0.3:
+                                    sentiment_desc = f"**negative news** about {ticker_input}. The market is showing concerns."
+                                else:
+                                    sentiment_desc = f"**mixed news** about {ticker_input}. The sentiment is neutral."
+                                
+                                st.info(f"""
+                                📰 **News Analysis**: We analyzed {total_articles} recent news articles about {ticker_input}. 
+                                The current news sentiment is {sentiment_desc}
+                                
+                                - {breakdown.get('positive', 0)} positive articles ({breakdown.get('positive_percentage', 0):.1f}%)
+                                - {breakdown.get('neutral', 0)} neutral articles ({breakdown.get('neutral_percentage', 0):.1f}%)
+                                - {breakdown.get('negative', 0)} negative articles ({breakdown.get('negative_percentage', 0):.1f}%)
+                                """)
+
+                        # Event breakdown - Simple description
+                        if result.get('event_breakdown'):
+                            st.divider()
+                            st.markdown("### What's Happening")
+                            
+                            event_breakdown = result['event_breakdown']
+                            most_common_event = result.get('event', 'general_news')
+                            event_display = most_common_event.replace('_', ' ').title()
+                            
+                            # Create simple description based on event type
+                            # Use ticker_input from outer scope
+                            event_description = {
+                                'product_launch': f"**New product launch**: According to recent news, {ticker_input} is launching new products or services.",
+                                'earnings_report': f"**Earnings report**: Recent news shows {ticker_input} has released earnings or financial results.",
+                                'acquisition': f"**Acquisition or merger**: News indicates {ticker_input} is involved in an acquisition or merger.",
+                                'partnership': f"**Partnership announcement**: Recent news shows {ticker_input} has formed new partnerships or collaborations.",
+                                'negative_event': f"**Negative developments**: Recent news reveals concerns, delays, or negative events for {ticker_input}.",
+                                'general_news': f"**General news**: Recent news coverage about {ticker_input} and market developments."
+                            }
+                            
+                            description = event_description.get(most_common_event, f"**{event_display}**: Recent news about {ticker_input}.")
+                            
+                            st.markdown(description)
+                            
+                            # Show event breakdown if multiple events
+                            if len(event_breakdown) > 1:
+                                st.markdown("**Detected Events:**")
+                                for event_type, count in sorted(event_breakdown.items(), key=lambda x: x[1], reverse=True):
+                                    if event_type != most_common_event:
+                                        event_name = event_type.replace('_', ' ').title()
+                                        st.markdown(f"- {event_name}: {count} article(s)")
+
+                        # Historical growth insights - Simple prediction
+                        avg_growth_7d = result.get('avg_growth_7d')
+                        avg_growth_30d = result.get('avg_growth_30d')
+                        event_type = result.get('event', 'similar events')
+                        event_type_display = event_type.replace('_', ' ').title()
+                        
+                        if avg_growth_7d is not None or avg_growth_30d is not None:
+                            st.divider()
+                            st.markdown("### Growth Prediction")
+                            
+                            # Build historical context message
+                            historical_context = ""
+                            if event_type == 'product_launch':
+                                historical_context = f"According to historical data, when {ticker_input} launched new products in the past,"
+                            elif event_type == 'earnings_report':
+                                historical_context = f"According to historical data, when {ticker_input} reported earnings in the past,"
+                            elif event_type == 'acquisition':
+                                historical_context = f"According to historical data, when {ticker_input} made acquisitions in the past,"
+                            elif event_type == 'partnership':
+                                historical_context = f"According to historical data, when {ticker_input} formed partnerships in the past,"
+                            elif event_type == 'negative_event':
+                                historical_context = f"According to historical data, when {ticker_input} faced similar negative events in the past,"
+                            else:
+                                historical_context = f"According to historical data, when {ticker_input} had similar events in the past,"
+                            
+                            # Build prediction message
+                            prediction_parts = []
+                            
+                            if avg_growth_7d is not None:
+                                if avg_growth_7d > 0:
+                                    prediction_parts.append(f"the stock price increased by an average of **{avg_growth_7d:.2f}%** within 7 days")
+                                else:
+                                    prediction_parts.append(f"the stock price decreased by an average of **{abs(avg_growth_7d):.2f}%** within 7 days")
+                            
+                            if avg_growth_30d is not None:
+                                if avg_growth_30d > 0:
+                                    prediction_parts.append(f"and by **{avg_growth_30d:.2f}%** over 30 days")
+                                else:
+                                    prediction_parts.append(f"and by **{abs(avg_growth_30d):.2f}%** over 30 days")
+                            
+                            if prediction_parts:
+                                historical_message = f"{historical_context} {', '.join(prediction_parts)}."
+                                st.info(f"📊 **Historical Context**: {historical_message}")
+                            
+                            # Current prediction
+                            st.divider()
+                            st.markdown("### Investment Outlook")
+                            
+                            prediction_text = f"""
+                            Based on the current news about **{event_type_display}** and historical performance, 
+                            if you buy {ticker_input} stock now, you can expect:
+                            """
+                            
+                            if avg_growth_7d is not None:
+                                if avg_growth_7d > 0:
+                                    prediction_text += f"\n- **{avg_growth_7d:.2f}% growth** in the next 7 days"
+                                else:
+                                    prediction_text += f"\n- **{abs(avg_growth_7d):.2f}% decline** in the next 7 days"
+                            
+                            if avg_growth_30d is not None:
+                                if avg_growth_30d > 0:
+                                    prediction_text += f"\n- **{avg_growth_30d:.2f}% growth** over the next 30 days"
+                                else:
+                                    prediction_text += f"\n- **{abs(avg_growth_30d):.2f}% decline** over the next 30 days"
+                            
+                            if avg_growth_7d is None and avg_growth_30d is None:
+                                prediction_text += "\n- **Insufficient historical data** to make a reliable prediction"
+                            
+                            prediction_text += "\n\n*Note: Past performance doesn't guarantee future results. Market conditions can change.*"
+                            
+                            if avg_growth_7d is not None and avg_growth_7d > 0:
+                                st.success(prediction_text)
+                            elif avg_growth_7d is not None and avg_growth_7d < 0:
+                                st.warning(prediction_text)
+                            else:
+                                st.info(prediction_text)
+                        else:
+                            st.divider()
+                            st.markdown("### Growth Prediction")
+                            st.info(f"📊 **Historical Data**: We don't have enough historical data to predict growth for {ticker_input} based on similar **{event_type_display}** events.")
+
+                        # Risk/Profit insights - Detailed explanation
+                        if result.get('risk_level') and result.get('profit_potential'):
+                            st.divider()
+                            st.markdown("### Risk & Profit Analysis")
+                            
+                            risk_level = result.get('risk_level')
+                            profit_potential = result.get('profit_potential')
+                            avg_sentiment = result.get('avg_sentiment', 0.0)
+                            avg_growth_7d = result.get('avg_growth_7d', 0.0) if result.get('avg_growth_7d') is not None else 0.0
+                            
+                            # Risk level color coding
+                            risk_colors = {
+                                "Low": "🟢",
+                                "Medium": "🟡",
+                                "High": "🟠",
+                                "Very High": "🔴"
+                            }
+                            risk_icon = risk_colors.get(risk_level, "⚪")
+                            
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.metric(
+                                    "Risk Level",
+                                    f"{risk_icon} {risk_level}",
+                                    help="Risk level based on sentiment and historical growth"
+                                )
+                            with col2:
+                                st.metric(
+                                    "Profit Potential",
+                                    f"{profit_potential}%",
+                                    help="Potential profit score (0-100%)"
+                                )
+                            
+                            # Simple risk assessment
+                            risk_assessment = ""
+                            if risk_level == "Low":
+                                risk_assessment = f"🟢 **Low Risk Opportunity**: Based on the positive news and historical performance, {ticker_input} presents a **low-risk investment opportunity** with **{profit_potential}% profit potential**. This could be a good time to invest."
+                            elif risk_level == "Medium":
+                                risk_assessment = f"🟡 **Medium Risk**: Based on the current news and historical data, {ticker_input} shows **moderate risk** with **{profit_potential}% profit potential**. Consider your risk tolerance before investing."
+                            elif risk_level == "High":
+                                risk_assessment = f"🟠 **High Risk**: Based on the current news and historical performance, {ticker_input} shows **high risk** with **{profit_potential}% profit potential**. Exercise caution and consider waiting for better conditions."
+                            else:
+                                risk_assessment = f"🔴 **Very High Risk**: Based on the negative news and historical data, {ticker_input} shows **very high risk** with **{profit_potential}% profit potential**. Consider avoiding this investment or wait for more positive developments."
+                            
+                            st.markdown(risk_assessment)
+
+                        # Latest headlines - TICKER-CENTRIC ONLY
+                        if result.get('latest_headlines'):
+                            st.divider()
+                            st.markdown("### Latest Headlines")
+                            st.caption(f"Showing ticker-specific news for {ticker_input}")
+                            
+                            for idx, headline in enumerate(result['latest_headlines'][:5], 1):
+                                with st.expander(f"{idx}. {headline.get('title', 'N/A')}"):
+                                    st.markdown(f"**Link:** [{headline.get('link', 'N/A')}]({headline.get('link', '#')})")
+
+                        # Saved file location
+                        if result.get('saved_to'):
+                            st.divider()
+                            st.success(f"Results saved to: {result['saved_to']}")
+
+                        # Error handling
+                        if result.get('error'):
+                            st.warning(f"Warning: {result['error']}")
+
+                    except Exception as e:
+                        st.error(f"Error analyzing news sentiment: {str(e)}")
+                        st.exception(e)
+            elif analyze_portfolio_stocks and summary['positions']:
+                # Analyze all portfolio stocks
+                with st.spinner("Analyzing news sentiment for all portfolio stocks..."):
+                    try:
+                        results = {}
+                        progress_bar = st.progress(0)
+                        total_stocks = len(summary['positions'])
+                        
+                        for idx, position in enumerate(summary['positions']):
+                            ticker = position.ticker
+                            progress_bar.progress((idx + 1) / total_stocks)
+                            
+                            try:
+                                result = st.session_state.news_sentiment_agent.run(
+                                    ticker=ticker,
+                                    max_articles=max_articles,
+                                    save_to_json=save_to_json
+                                )
+                                results[ticker] = result
+                            except Exception as e:
+                                st.warning(f"Error analyzing {ticker}: {str(e)}")
+                                results[ticker] = {"error": str(e)}
+
+                        progress_bar.empty()
+
+                        # Display portfolio analysis results
+                        st.divider()
+                        st.markdown("### Portfolio News Sentiment Analysis")
+
+                        # Create summary table
+                        summary_data = []
+                        for ticker, result in results.items():
+                            if not result.get('error'):
+                                summary_data.append({
+                                    'Ticker': ticker,
+                                    'Risk Level': result.get('risk_level', 'N/A'),
+                                    'Profit Potential': result.get('profit_potential', 'N/A'),
+                                    'Avg Sentiment': result.get('avg_sentiment', 'N/A'),
+                                    'Event Type': result.get('event', 'N/A').replace('_', ' ').title(),
+                                    '7D Growth': f"{result.get('avg_growth_7d', 'N/A')}%" if result.get('avg_growth_7d') is not None else 'N/A'
+                                })
+
+                        if summary_data:
+                            df_summary = pd.DataFrame(summary_data)
+                            st.dataframe(df_summary, use_container_width=True, hide_index=True)
+
+                            # Risk level distribution
+                            st.divider()
+                            st.markdown("### Risk Level Distribution")
+                            risk_counts = df_summary['Risk Level'].value_counts()
+                            fig_risk = px.bar(
+                                x=risk_counts.index,
+                                y=risk_counts.values,
+                                title="Portfolio Risk Distribution",
+                                labels={'x': 'Risk Level', 'y': 'Count'}
+                            )
+                            st.plotly_chart(fig_risk, use_container_width=True)
+
+                        else:
+                            st.warning("No analysis results available")
+
+                    except Exception as e:
+                        st.error(f"Error analyzing portfolio stocks: {str(e)}")
+                        st.exception(e)
+            else:
+                st.warning("Please enter a ticker symbol or enable portfolio analysis")
+
 
 def main():
     """Main application"""
@@ -1493,10 +2499,10 @@ def main():
 
         view = st.radio(
             "Navigate",
-            options=["market", "portfolio", "settings"],
-            format_func=lambda x: {"market": "Market", "portfolio": "Portfolio", "settings": "Settings"}[x],
+            options=["market", "portfolio", "news", "settings"],
+            format_func=lambda x: {"market": "Market", "portfolio": "Portfolio", "news": "News", "settings": "Settings"}[x],
             key="nav",
-            index=["market", "portfolio", "settings"].index(current_nav) if current_nav in ["market", "portfolio", "settings"] else 0
+            index=["market", "portfolio", "news", "settings"].index(current_nav) if current_nav in ["market", "portfolio", "news", "settings"] else 0
         )
 
         # Only update view_mode if navigation actually changed and we're not viewing stock details
@@ -1506,6 +2512,9 @@ def main():
                 st.session_state.selected_stock = None
             elif view == "portfolio":
                 st.session_state.view_mode = "portfolio"
+                st.session_state.selected_stock = None
+            elif view == "news":
+                st.session_state.view_mode = "news"
                 st.session_state.selected_stock = None
             st.rerun()
 
@@ -1528,6 +2537,8 @@ def main():
         render_stock_detail()
     elif st.session_state.view_mode == "portfolio" or view == "portfolio":
         render_portfolio_view()
+    elif st.session_state.view_mode == "news" or view == "news":
+        render_news_view()
     elif st.session_state.nav == "settings" or view == "settings":
         render_settings()
     elif st.session_state.view_mode == "market" or view == "market":
